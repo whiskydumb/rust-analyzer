@@ -219,6 +219,7 @@ impl AnalysisHost {
         // That is `trigger_lru_eviction` is currently bugged wrt to cancellation.
         // self.db.trigger_lru_eviction();
         self.db.synthetic_write(Durability::LOW);
+        hir::clear_tls_solver_cache();
         // SAFETY: `trigger_lru_eviction` triggers cancellation, so all running queries were canceled.
         unsafe { hir::collect_ty_garbage() };
     }
