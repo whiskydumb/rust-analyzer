@@ -50,6 +50,11 @@ use crate::cli::{
 
 impl flags::AnalysisStats {
     pub fn run(self, verbosity: Verbosity) -> anyhow::Result<()> {
+        #[cfg(feature = "dhat")]
+        let _dhat_profiler = std::env::var("RA_DHAT_FILE").ok().map(|file| {
+            dhat::Profiler::builder().file_name(file).build()
+        });
+
         let mut rayon_pool = rayon::ThreadPoolBuilder::new()
             .thread_name(|ix| format!("RayonWorker{}", ix))
             .stack_size(stdx::thread::DEFAULT_STACK_SIZE);
