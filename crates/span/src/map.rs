@@ -31,6 +31,11 @@ impl SpanMap {
         Self { spans: Vec::new(), matched_arm: None }
     }
 
+    /// Creates a new empty [`SpanMap`] with room for `cap` spans.
+    pub fn with_capacity(cap: usize) -> Self {
+        Self { spans: Vec::with_capacity(cap), matched_arm: None }
+    }
+
     /// Finalizes the [`SpanMap`], shrinking its backing storage and validating that the offsets are
     /// in order.
     pub fn finish(&mut self) {

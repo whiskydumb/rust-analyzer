@@ -156,7 +156,10 @@ where
     let parser_input = to_parser_input(buffer, span_to_edition);
     // It matters what edition we parse with even when we escape all identifiers correctly.
     let parser_output = entry_point.parse(&parser_input);
-    let mut tree_sink = TtTreeSink::new(buffer.cursor());
+    // The sink pushes one span per input token plus a few extras for
+    // whitespace between adjacent puncts and float-splitting.
+    let mut tree_sink =
+        TtTreeSink::new(buffer.cursor(), parser_input.len() + parser_input.len() / 8);
     for event in parser_output.iter() {
         match event {
             parser::Step::Token { kind, n_input_tokens: n_raw_tokens } => {
@@ -210,8 +213,10 @@ where
     C: TokenConverter,
     C::Token: fmt::Debug,
 {
-    let mut builder =
-        tt::TopSubtreeBuilder::new(tt::Delimiter::invisible_spanned(conv.call_site()));
+    let mut builder = tt::TopSubtreeBuilder::with_capacity(
+        tt::Delimiter::invisible_spanned(conv.call_site()),
+        conv.remaining_tokens_hint(),
+    );
 
     while let Some((token, abs_range)) = conv.bump() {
         let tt = match token.as_leaf() {
@@ -501,6 +506,12 @@ trait TokenConverter: Sized {
     fn span_for(&self, range: TextRange) -> Span;
 
     fn call_site(&self) -> Span;
+
+    /// A lower bound on the number of remaining tokens, used to size the
+    /// token tree builder.
+    fn remaining_tokens_hint(&self) -> usize {
+        0
+    }
 }
 
 impl SrcToken<RawConverter<'_>> for usize {
@@ -571,6 +582,10 @@ impl TokenConverter for RawConverter<'_> {
     fn call_site(&self) -> Span {
         Span { range: TextRange::empty(0.into()), anchor: self.anchor, ctx: self.ctx }
     }
+
+    fn remaining_tokens_hint(&self) -> usize {
+        self.lexed.len() - self.pos
+    }
 }
 
 impl TokenConverter for StaticRawConverter<'_> {
@@ -612,6 +627,10 @@ impl TokenConverter for StaticRawConverter<'_> {
 
     fn call_site(&self) -> Span {
         self.span
+    }
+
+    fn remaining_tokens_hint(&self) -> usize {
+        self.lexed.len() - self.pos
     }
 }
 
@@ -832,6 +851,11 @@ where
     fn call_site(&self) -> Span {
         self.call_site
     }
+
+    fn remaining_tokens_hint(&self) -> usize {
+        // Rough estimate: average Rust token length is ~4 bytes.
+        usize::from(self.range.len()) / 4
+    }
 }
 
 struct TtTreeSink<'a> {
@@ -843,13 +867,13 @@ struct TtTreeSink<'a> {
 }
 
 impl<'a> TtTreeSink<'a> {
-    fn new(cursor: Cursor<'a>) -> Self {
+    fn new(cursor: Cursor<'a>, n_tokens_estimate: usize) -> Self {
         TtTreeSink {
             buf: String::new(),
             cursor,
             text_pos: 0.into(),
             inner: SyntaxTreeBuilder::default(),
-            token_map: SpanMap::empty(),
+            token_map: SpanMap::with_capacity(n_tokens_estimate),
         }
     }
 

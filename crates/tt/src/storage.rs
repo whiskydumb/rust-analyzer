@@ -1234,9 +1234,13 @@ impl TopSubtreeBuilder {
     }
 
     pub fn new(top_delimiter: Delimiter) -> Self {
+        Self::with_capacity(top_delimiter, 0)
+    }
+
+    pub fn with_capacity(top_delimiter: Delimiter, capacity: usize) -> Self {
         let mut result = Self {
             unclosed_subtree_indices: Vec::new(),
-            token_trees: Vec::new(),
+            token_trees: Vec::with_capacity(capacity),
             span_parts_frequencies: FxHashMap::default(),
             last_closed_subtree: None,
             symbol_frequencies: FxHashMap::default(),
@@ -1310,10 +1314,13 @@ impl TopSubtreeBuilder {
     }
 
     pub fn extend(&mut self, leaves: impl IntoIterator<Item = Leaf>) {
-        leaves.into_iter().for_each(|leaf| self.push(leaf));
+        let iter = leaves.into_iter();
+        self.token_trees.reserve(iter.size_hint().0);
+        iter.for_each(|leaf| self.push(leaf));
     }
 
     pub fn extend_with_tt(&mut self, tt: TokenTreesView<'_>) {
+        self.token_trees.reserve(tt.len());
         tt.iter_flat_tokens().for_each(|tt| self.push_token_tree(tt));
     }
 
