@@ -611,7 +611,7 @@ impl ProcMacroExpander for Expander {
                     ast_id,
                     TextRange::new(TextSize::from(start), TextSize::from(end)),
                 );
-                let source = db.file_text(range.file_id.file_id(db)).text(db);
+                let source = db.file_text(range.file_id.file_id(db)).text(db).as_str();
                 let text = source
                     .get(usize::from(range.range.start())..usize::from(range.range.end()))
                     .map(ToOwned::to_owned);

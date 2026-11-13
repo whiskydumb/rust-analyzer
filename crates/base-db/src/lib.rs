@@ -89,10 +89,10 @@ impl Files {
     pub fn set_file_text(&self, db: &mut dyn SourceDatabase, file_id: vfs::FileId, text: &str) {
         match self.files.entry(file_id) {
             Entry::Occupied(mut occupied) => {
-                occupied.get_mut().set_text(db).to(Arc::from(text));
+                occupied.get_mut().set_text(db).to(FileTextData::new(text, false));
             }
             Entry::Vacant(vacant) => {
-                let text = FileText::new(db, Arc::from(text), file_id);
+                let text = FileText::new(db, FileTextData::new(text, false), file_id);
                 vacant.insert(text);
             }
         };
@@ -105,13 +105,19 @@ impl Files {
         text: &str,
         durability: Durability,
     ) {
+        let compress = durability == Durability::HIGH;
         match self.files.entry(file_id) {
             Entry::Occupied(mut occupied) => {
-                occupied.get_mut().set_text(db).with_durability(durability).to(Arc::from(text));
+                occupied
+                    .get_mut()
+                    .set_text(db)
+                    .with_durability(durability)
+                    .to(FileTextData::new(text, compress));
             }
             Entry::Vacant(vacant) => {
-                let text =
-                    FileText::builder(Arc::from(text), file_id).durability(durability).new(db);
+                let text = FileText::builder(FileTextData::new(text, compress), file_id)
+                    .durability(durability)
+                    .new(db);
                 vacant.insert(text);
             }
         };
@@ -214,10 +220,128 @@ pub struct LocalRoots {
     pub roots: FxHashSet<SourceRootId>,
 }
 
-#[salsa::input(debug)]
+/// How [`FileText`] stores the file's contents.
+///
+/// Library files are immutable, so their text is stored compressed and decompressed
+/// on each access. Workspace files are stored verbatim, as they change frequently.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum FileTextData {
+    Plain(Arc<str>),
+    Compressed(Box<[u8]>),
+}
+
+/// Below this size compression is not worth the decompression overhead.
+const FILE_TEXT_COMPRESSION_MIN_SIZE: usize = 4096;
+
+impl FileTextData {
+    fn new(text: &str, compress: bool) -> Self {
+        if compress && text.len() >= FILE_TEXT_COMPRESSION_MIN_SIZE {
+            Self::Compressed(
+                lz4_flex::compress_prepend_size(text.as_bytes()).into_boxed_slice(),
+            )
+        } else {
+            Self::Plain(Arc::from(text))
+        }
+    }
+
+    /// Decompressed length of the text in bytes.
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Plain(text) => text.len(),
+            Self::Compressed(data) => {
+                lz4_flex::block::uncompressed_size(data).map_or(0, |(len, _)| len)
+            }
+        }
+    }
+
+    /// Returns the file's text, decompressing it on the spot if needed.
+    pub fn as_str(&self) -> FileTextRef<'static> {
+        match self {
+            Self::Plain(text) => FileTextRef::Shared(text.clone()),
+            Self::Compressed(data) => FileTextRef::Owned(
+                String::from_utf8(
+                    lz4_flex::decompress_size_prepended(data)
+                        .expect("file text is not a valid lz4 stream"),
+                )
+                .expect("file text is not valid utf-8"),
+            ),
+        }
+    }
+}
+
+/// A reference to file text, either shared or owned (decompressed on the fly).
+/// Dereferences to `str` for convenience.
+#[derive(Debug, Clone)]
+pub enum FileTextRef<'a> {
+    Shared(Arc<str>),
+    Borrowed(&'a str),
+    Owned(String),
+}
+
+impl std::ops::Deref for FileTextRef<'_> {
+    type Target = str;
+    fn deref(&self) -> &str {
+        match self {
+            Self::Shared(text) => text,
+            Self::Borrowed(text) => text,
+            Self::Owned(text) => text,
+        }
+    }
+}
+
+impl AsRef<str> for FileTextRef<'_> {
+    fn as_ref(&self) -> &str {
+        self
+    }
+}
+
+impl std::borrow::Borrow<str> for FileTextRef<'_> {
+    fn borrow(&self) -> &str {
+        self
+    }
+}
+
+impl<T> std::ops::Index<T> for FileTextRef<'_>
+where
+    str: std::ops::Index<T>,
+{
+    type Output = <str as std::ops::Index<T>>::Output;
+
+    #[inline]
+
+    fn index(&self, index: T) -> &Self::Output {
+        &(&**self)[index]
+    }
+}
+
+impl std::fmt::Display for FileTextRef<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self)
+    }
+}
+
+impl FileTextRef<'_> {
+    /// Upgrades the reference to a shared `Arc<str>`.
+    pub fn into_arc(self) -> Arc<str> {
+        match self {
+            Self::Shared(text) => text,
+            Self::Borrowed(text) => Arc::from(text),
+            Self::Owned(text) => Arc::from(text.as_str()),
+        }
+    }
+}
+
+fn file_text_heap_size((text, _file_id): &(FileTextData, vfs::FileId)) -> usize {
+    match text {
+        FileTextData::Plain(text) => text.len(),
+        FileTextData::Compressed(data) => data.len(),
+    }
+}
+
+#[salsa::input(debug, heap_size = file_text_heap_size)]
 pub struct FileText {
     #[returns(ref)]
-    pub text: Arc<str>,
+    pub text: FileTextData,
     pub file_id: vfs::FileId,
 }
 

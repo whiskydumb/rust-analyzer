@@ -36,7 +36,7 @@ impl flags::Ssr {
         let edits = match_finder.edits();
         for (file_id, edit) in edits {
             if let Some(path) = vfs.file_path(file_id).as_path() {
-                let mut contents = db.file_text(file_id).text(db).to_string();
+                let mut contents = db.file_text(file_id).text(db).as_str().to_string();
                 edit.apply(&mut contents);
                 std::fs::write(path, contents)
                     .with_context(|| format!("failed to write {path}"))?;

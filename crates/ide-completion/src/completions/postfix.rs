@@ -396,7 +396,7 @@ fn get_receiver_text(
         range.range = TextRange::at(range.range.start(), range.range.len() - TextSize::of('.'))
     }
     let file_text = sema.db.file_text(range.file_id.file_id(sema.db));
-    let text = file_text.text(sema.db);
+    let text = file_text.text(sema.db).as_str();
     let indent_spaces = indent_of_tail_line(&text[TextRange::up_to(range.range.end())]);
     let mut text = stdx::dedent_by(indent_spaces, &text[range.range]);
 

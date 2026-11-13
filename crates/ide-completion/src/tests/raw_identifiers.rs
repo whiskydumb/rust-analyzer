@@ -7,7 +7,7 @@ use crate::tests::{TEST_CONFIG, completion_list_with_config_raw, position};
 fn check(#[rust_analyzer::rust_fixture] ra_fixture: &str, expect: Expect) {
     let completions = completion_list_with_config_raw(TEST_CONFIG, ra_fixture, true, None);
     let (db, position) = position(ra_fixture);
-    let mut actual = db.file_text(position.file_id).text(&db).to_string();
+    let mut actual = db.file_text(position.file_id).text(&db).as_str().to_string();
     // FIXME: rewrite in terms of `#![feature(exact_length_collection)]`. See: #149266
     Itertools::exactly_one(completions.into_iter())
         .expect("more than one completion")

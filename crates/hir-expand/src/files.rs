@@ -77,13 +77,13 @@ impl FileRange {
     }
 
     #[inline]
-    pub fn file_text(self, db: &dyn SourceDatabase) -> &triomphe::Arc<str> {
-        db.file_text(self.file_id.file_id(db)).text(db)
+    pub fn file_text(self, db: &dyn SourceDatabase) -> base_db::FileTextRef<'static> {
+        db.file_text(self.file_id.file_id(db)).text(db).as_str()
     }
 
     #[inline]
-    pub fn text(self, db: &dyn SourceDatabase) -> &str {
-        &self.file_text(db)[self.range]
+    pub fn text(self, db: &dyn SourceDatabase) -> base_db::FileTextRef<'static> {
+        base_db::FileTextRef::Owned(self.file_text(db)[self.range].to_owned())
     }
 }
 

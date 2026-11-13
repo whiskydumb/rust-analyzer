@@ -254,7 +254,7 @@ pub(crate) fn check_edit_with_config(
     else {
         panic!("can't find {what:?} completion in {completions:#?}")
     };
-    let mut actual = db.file_text(position.file_id).text(&db).to_string();
+    let mut actual = db.file_text(position.file_id).text(&db).as_str().to_string();
 
     let mut combined_edit = completion.text_edit.clone();
 

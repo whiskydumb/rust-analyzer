@@ -270,7 +270,7 @@ pub(crate) fn check_assist_unresolved(
 fn check_doc_test(assist_id: &str, before: &str, after: &str) {
     let after = trim_indent(after);
     let (db, file_id, selection) = RootDatabase::with_range_or_offset(before);
-    let before = db.file_text(file_id.file_id(&db)).text(&db).to_string();
+    let before = db.file_text(file_id.file_id(&db)).text(&db).as_str().to_string();
     let frange = ide_db::FileRange { file_id: file_id.file_id(&db), range: selection.into() };
 
     let assist = assists(&db, &TEST_CONFIG, AssistResolveStrategy::All, frange)
@@ -335,7 +335,7 @@ fn check_with_config(
     let file_with_caret_id = sema
         .attach_first_edition_opt(file_with_caret_id.file_id(&db))
         .unwrap_or(file_with_caret_id);
-    let text_without_caret = db.file_text(file_with_caret_id.file_id(&db)).text(&db).to_string();
+    let text_without_caret = db.file_text(file_with_caret_id.file_id(&db)).text(&db).as_str().to_string();
 
     let frange = hir::FileRange { file_id: file_with_caret_id, range: range_or_offset.into() };
 
@@ -368,7 +368,7 @@ fn check_with_config(
 
             let mut buf = String::new();
             for (file_id, (edit, snippet_edit)) in source_change.source_file_edits {
-                let mut text = db.file_text(file_id).text(&db).as_ref().to_owned();
+                let mut text = db.file_text(file_id).text(&db).as_str().to_string();
                 edit.apply(&mut text);
                 if let Some(snippet_edit) = snippet_edit {
                     snippet_edit.apply(&mut text);
@@ -386,7 +386,7 @@ fn check_with_config(
                 let (dst, contents) = match file_system_edit {
                     FileSystemEdit::CreateFile { dst, initial_contents } => (dst, initial_contents),
                     FileSystemEdit::MoveFile { src, dst } => {
-                        (dst, db.file_text(src).text(&db).as_ref().to_owned())
+                        (dst, db.file_text(src).text(&db).as_str().to_string())
                     }
                     FileSystemEdit::MoveDir { src, src_id, dst } => {
                         // temporary placeholder for MoveDir since we are not using MoveDir in ide assists yet.

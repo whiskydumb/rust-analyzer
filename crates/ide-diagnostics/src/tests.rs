@@ -91,7 +91,7 @@ fn check_nth_fix_with_config(
     let actual = {
         let source_change = fix.source_change.as_ref().unwrap();
         let file_id = *source_change.source_file_edits.keys().next().unwrap();
-        let mut actual = db.file_text(file_id).text(&db).to_string();
+        let mut actual = db.file_text(file_id).text(&db).as_str().to_string();
 
         for (edit, snippet_edit) in source_change.source_file_edits.values() {
             edit.apply(&mut actual);
@@ -150,7 +150,7 @@ pub(crate) fn check_has_fix(
                     let actual = {
                         let source_change = fix.source_change.as_ref().unwrap();
                         let file_id = *source_change.source_file_edits.keys().next().unwrap();
-                        let mut actual = db.file_text(file_id).text(&db).to_string();
+                        let mut actual = db.file_text(file_id).text(&db).as_str().to_string();
 
                         for (edit, snippet_edit) in source_change.source_file_edits.values() {
                             edit.apply(&mut actual);
@@ -246,7 +246,7 @@ pub(crate) fn check_diagnostics_with_config(
         let line_index = line_index(&db, file_id);
 
         let mut actual = annotations.remove(&file_id).unwrap_or_default();
-        let mut expected = extract_annotations(db.file_text(file_id).text(&db));
+        let mut expected = extract_annotations(&db.file_text(file_id).text(&db).as_str());
         expected.sort_by_key(|(range, s)| (range.start(), s.clone()));
         actual.sort_by_key(|(range, s)| (range.start(), s.clone()));
         // FIXME: We should panic on duplicates instead, but includes currently cause us to report
@@ -260,7 +260,7 @@ pub(crate) fn check_diagnostics_with_config(
             for (e, _) in &actual {
                 eprintln!(
                     "Code in range {e:?} = {}",
-                    &db.file_text(file_id).text(&db)[usize::from(e.start())..usize::from(e.end())]
+                    &db.file_text(file_id).text(&db).as_str()[usize::from(e.start())..usize::from(e.end())]
                 )
             }
         }

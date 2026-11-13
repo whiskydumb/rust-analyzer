@@ -10,6 +10,10 @@ use vfs::FileId;
 
 use crate::SourceDatabase;
 
+fn parse_heap_size(parse: &syntax::Parse<ast::SourceFile>) -> usize {
+    parse.heap_size()
+}
+
 #[salsa::interned(debug, constructor = from_span_file_id, unsafe(no_lifetime), revisions = usize::MAX)]
 #[derive(PartialOrd, Ord)]
 pub struct EditionedFileId {
@@ -19,12 +23,12 @@ pub struct EditionedFileId {
 
 #[salsa::tracked]
 impl EditionedFileId {
-    #[salsa::tracked(lru = 128, returns(clone))]
+    #[salsa::tracked(lru = 128, returns(clone), heap_size = parse_heap_size)]
     pub fn parse(self, db: &dyn SourceDatabase) -> syntax::Parse<ast::SourceFile> {
         let _p = tracing::info_span!("parse", ?self).entered();
         let (file_id, edition) = self.unpack(db);
-        let text = db.file_text(file_id).text(db);
-        ast::SourceFile::parse(text, edition)
+        let text = db.file_text(file_id).text(db).as_str();
+        ast::SourceFile::parse(&text, edition)
     }
 
     // firewall query

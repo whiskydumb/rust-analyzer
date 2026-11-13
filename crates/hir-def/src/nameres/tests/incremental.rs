@@ -618,7 +618,7 @@ pub type Ty = ();
     );
 
     let file_id = pos.file_id.file_id(&db);
-    let file_text = db.file_text(file_id).text(&db);
+    let file_text = db.file_text(file_id).text(&db).as_str();
     db.set_file_text(file_id, &format!("{file_text}\n"));
 
     execute_assert_events(

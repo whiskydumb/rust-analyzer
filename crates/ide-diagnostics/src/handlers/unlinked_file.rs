@@ -49,8 +49,8 @@ pub(crate) fn unlinked_file(
         //
         // Only show this diagnostic on the first three characters of
         // the file, to avoid overwhelming the user during startup.
-        range = SourceDatabase::file_text(ctx.sema.db, file_id)
-            .text(ctx.sema.db)
+        let text = SourceDatabase::file_text(ctx.sema.db, file_id).text(ctx.sema.db).as_str();
+        range = text
             .char_indices()
             .take(3)
             .last()

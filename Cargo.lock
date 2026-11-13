@@ -95,6 +95,7 @@ dependencies = [
  "indexmap",
  "intern",
  "la-arena 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "lz4_flex",
  "rustc-hash 2.1.2",
  "salsa",
  "semver",
@@ -1491,6 +1492,12 @@ dependencies = [
  "serde_json",
  "toolchain",
 ]
+
+[[package]]
+name = "lz4_flex"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "90071f8077f8e40adfc4b7fe9cd495ce316263f19e75c2211eeff3fdf475a3d9"
 
 [[package]]
 name = "macros"

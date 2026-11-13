@@ -122,11 +122,21 @@ impl flags::AnalysisStats {
         eprintln!(")");
 
         let mut host = AnalysisHost::with_database(db);
-        let db = host.raw_database();
 
-        let mut analysis_sw = self.stop_watch();
+        let mut analysis_sw;
+        let mut krates;
+        let mut dep_loc = 0;
+        let mut workspace_loc = 0;
+        let mut dep_item_trees = 0;
+        let mut workspace_item_trees = 0;
+        let mut workspace_item_stats = PrettyItemStats::default();
+        let mut dep_item_stats = PrettyItemStats::default();
+        {
+            let db = host.raw_database();
 
-        let mut krates = Crate::all(db);
+            analysis_sw = self.stop_watch();
+
+            krates = Crate::all(db);
         if self.randomize {
             shuffle(&mut rng, &mut krates);
         }
@@ -138,14 +148,6 @@ impl flags::AnalysisStats {
             .map(|krate| (db.file_source_root(krate.root_file(db)).source_root_id(db), krate))
             .unique_by(|(source_root_id, _)| *source_root_id);
 
-        let mut dep_loc = 0;
-        let mut workspace_loc = 0;
-        let mut dep_item_trees = 0;
-        let mut workspace_item_trees = 0;
-
-        let mut workspace_item_stats = PrettyItemStats::default();
-        let mut dep_item_stats = PrettyItemStats::default();
-
         for (source_root_id, krate) in source_roots {
             let source_root = db.source_root(source_root_id).source_root(db);
             for file_id in source_root.iter() {
@@ -154,7 +156,7 @@ impl flags::AnalysisStats {
                 {
                     // measure workspace/project code
                     if !source_root.is_library || self.with_deps {
-                        let length = db.file_text(file_id).text(db).lines().count();
+                        let length = db.file_text(file_id).text(db).as_str().lines().count();
                         let item_stats = hir::db::file_item_tree(
                             db,
                             EditionedFileId::current_edition(db, file_id).into(),
@@ -167,7 +169,7 @@ impl flags::AnalysisStats {
                         workspace_item_trees += 1;
                         workspace_item_stats += item_stats;
                     } else {
-                        let length = db.file_text(file_id).text(db).lines().count();
+                        let length = db.file_text(file_id).text(db).as_str().lines().count();
                         let item_stats = hir::db::file_item_tree(
                             db,
                             EditionedFileId::current_edition(db, file_id).into(),
@@ -212,6 +214,9 @@ impl flags::AnalysisStats {
         eprintln!("{:<20} {}", "Item Tree Collection:", item_tree_time);
         report_metric("item tree time", item_tree_time.time.as_millis() as u64, "ms");
         eprintln!("  Total Statistics:");
+        }
+        host.trigger_garbage_collection();
+        let db = host.raw_database();
 
         let mut crate_def_map_sw = self.stop_watch();
         let mut num_crates = 0;
@@ -566,6 +571,7 @@ impl flags::AnalysisStats {
                 let original_text: String = db
                     .file_text(file_id.into())
                     .text(db)
+                    .as_str()
                     .chars()
                     .skip(usize::from(range.start()))
                     .take(usize::from(range.end()) - usize::from(range.start()))
@@ -616,7 +622,7 @@ impl flags::AnalysisStats {
                         drop_whitespace(&original_text) == drop_whitespace(&generated);
 
                     // Validate if type-checks
-                    let mut txt = file_txt.text(db).to_string();
+                    let mut txt = file_txt.text(db).as_str().to_string();
 
                     let edit = ide::TextEdit::replace(range, generated.clone());
                     edit.apply(&mut txt);
@@ -677,7 +683,7 @@ impl flags::AnalysisStats {
             }
             // Revert file back to original state
             if self.validate_term_search {
-                std::fs::write(path, file_txt.text(db).to_string()).unwrap();
+                std::fs::write(path, file_txt.text(db).as_str().to_string()).unwrap();
             }
 
             bar.inc(1);

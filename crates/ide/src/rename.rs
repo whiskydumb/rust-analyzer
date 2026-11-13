@@ -477,7 +477,7 @@ fn transform_assoc_fn_into_method_call(
             if self_needs_parens {
                 replacement.push('(');
             }
-            replacement.push_str(macro_mapped_self.text(sema.db));
+            replacement.push_str(&macro_mapped_self.text(sema.db));
             if self_needs_parens {
                 replacement.push(')');
             }
@@ -734,7 +734,7 @@ fn transform_method_call_into_assoc_fn(
             if self_needs_parens {
                 replacement.push('(');
             }
-            replacement.push_str(macro_mapped_self.text(sema.db));
+            replacement.push_str(&macro_mapped_self.text(sema.db));
             if self_needs_parens {
                 replacement.push(')');
             }

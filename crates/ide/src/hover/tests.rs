@@ -59,8 +59,8 @@ fn check_with_config(
         .unwrap()
         .unwrap();
 
-    let content = analysis.db.file_text(position.file_id);
-    let hovered_element = &content.text(&analysis.db)[hover.range];
+    let content = analysis.db.file_text(position.file_id).text(&analysis.db).as_str();
+    let hovered_element = &content[hover.range];
 
     let actual = format!("*{hovered_element}*\n{}\n", hover.info.markup);
     expect.assert_eq(&actual)

@@ -74,13 +74,13 @@ impl flags::UnresolvedReferences {
                     eprintln!("processing crate: {crate_name}, module: {file_path}",);
 
                     let line_index = line_index(db, file_id);
-                    let file_text = db.file_text(file_id);
+                    let file_text = db.file_text(file_id).text(db).as_str();
 
                     for range in find_unresolved_references(db, &sema, file_id, &module) {
                         let line_col = line_index.line_col(range.start());
                         let line = line_col.line + 1;
                         let col = line_col.col + 1;
-                        let text = &file_text.text(db)[range];
+                        let text = &file_text[range];
                         println!("{file_path}:{line}:{col}: {text}");
                     }
 

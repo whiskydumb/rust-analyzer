@@ -266,8 +266,8 @@ pub fn line_index(db: &dyn SourceDatabase, file_id: FileId) -> &Arc<LineIndex> {
         db: &'db dyn SourceDatabase,
         file_id: InternedFileId<'db>,
     ) -> Arc<LineIndex> {
-        let text = db.file_text(file_id.id(db)).text(db);
-        Arc::new(LineIndex::new(text))
+        let text = db.file_text(file_id.id(db)).text(db).as_str();
+        Arc::new(LineIndex::new(&text))
     }
     line_index(db, InternedFileId::new(db, file_id))
 }

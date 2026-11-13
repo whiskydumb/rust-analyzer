@@ -7,7 +7,7 @@
 use std::mem;
 use std::{cell::LazyCell, cmp::Reverse};
 
-use base_db::{SourceDatabase, all_crates};
+use base_db::{FileTextRef, SourceDatabase, all_crates};
 use either::Either;
 use hir::{
     Adt, AsAssocItem, DefWithBody, EditionedFileId, ExpressionStoreOwner, FileRange,
@@ -23,8 +23,6 @@ use syntax::{
     ast::{self, HasName, Rename},
     match_ast,
 };
-use triomphe::Arc;
-
 use crate::{
     RootDatabase,
     defs::{Definition, NameClass, NameRefClass},
@@ -515,7 +513,7 @@ impl<'a, 'db> FindUsages<'a, 'db> {
         db: &'b RootDatabase,
         scope: &'b SearchScope,
         exclude_library_files: bool,
-    ) -> impl Iterator<Item = (Arc<str>, EditionedFileId, TextRange)> + 'b {
+    ) -> impl Iterator<Item = (FileTextRef<'static>, EditionedFileId, TextRange)> + 'b {
         scope
             .entries
             .iter()
@@ -523,11 +521,11 @@ impl<'a, 'db> FindUsages<'a, 'db> {
                 !exclude_library_files || !is_library_file(db, file_id.file_id(db))
             })
             .map(|(&file_id, &search_range)| {
-                let text = db.file_text(file_id.file_id(db)).text(db);
+                let text = db.file_text(file_id.file_id(db)).text(db).as_str();
                 let search_range =
-                    search_range.unwrap_or_else(|| TextRange::up_to(TextSize::of(&**text)));
+                    search_range.unwrap_or_else(|| TextRange::up_to(TextSize::of(&*text)));
 
-                (text.clone(), file_id, search_range)
+                (text, file_id, search_range)
             })
     }
 
@@ -843,7 +841,7 @@ impl<'a, 'db> FindUsages<'a, 'db> {
             this: &FindUsages<'_, '_>,
             finder: &Finder<'_>,
             name: &str,
-            files: impl Iterator<Item = (Arc<str>, EditionedFileId, TextRange)>,
+            files: impl Iterator<Item = (FileTextRef<'static>, EditionedFileId, TextRange)>,
             mut container_predicate: impl FnMut(
                 &SyntaxNode,
                 InFileWrapper<EditionedFileId, TextRange>,
@@ -895,7 +893,7 @@ impl<'a, 'db> FindUsages<'a, 'db> {
                 &finder,
                 name,
                 is_possibly_self.into_iter().map(|position| {
-                    (position.file_text(self.sema.db).clone(), position.file_id, position.range)
+                    (position.file_text(self.sema.db), position.file_id, position.range)
                 }),
                 |path, name_position| {
                     let has_self = path
@@ -1106,14 +1104,14 @@ impl<'a, 'db> FindUsages<'a, 'db> {
                 };
 
                 let file_text = sema.db.file_text(file_id.file_id(self.sema.db));
-                let text = file_text.text(sema.db);
+                let text = file_text.text(sema.db).as_str();
                 let search_range =
-                    search_range.unwrap_or_else(|| TextRange::up_to(TextSize::of(&**text)));
+                    search_range.unwrap_or_else(|| TextRange::up_to(TextSize::of(&*text)));
 
                 let tree = LazyCell::new(|| sema.parse(file_id).syntax().clone());
                 let finder = &Finder::new("self");
 
-                for offset in Self::match_indices(text, finder, search_range) {
+                for offset in Self::match_indices(&text, finder, search_range) {
                     for name_ref in Self::find_nodes(sema, "self", file_id, &tree, offset)
                         .filter_map(ast::NameRef::cast)
                     {
