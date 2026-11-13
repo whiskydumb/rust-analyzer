@@ -17,7 +17,7 @@ pub mod target;
 
 use std::{
     cell::RefCell,
-    hash::BuildHasherDefault,
+    hash::{BuildHasherDefault, Hash as _, Hasher as _},
     panic,
     str::FromStr as _,
     sync::{Once, atomic::AtomicUsize},
@@ -233,12 +233,14 @@ pub enum FileTextData {
 /// Below this size compression is not worth the decompression overhead.
 const FILE_TEXT_COMPRESSION_MIN_SIZE: usize = 4096;
 
+/// Decompressed texts larger than this are not kept in the per-thread access
+/// cache; decompressing them on demand is fine as they are read rarely.
+const FILE_TEXT_CACHE_MAX_SIZE: usize = 512 * 1024;
+
 impl FileTextData {
     fn new(text: &str, compress: bool) -> Self {
         if compress && text.len() >= FILE_TEXT_COMPRESSION_MIN_SIZE {
-            Self::Compressed(
-                lz4_flex::compress_prepend_size(text.as_bytes()).into_boxed_slice(),
-            )
+            Self::Compressed(lz4_flex::compress_prepend_size(text.as_bytes()).into_boxed_slice())
         } else {
             Self::Plain(Arc::from(text))
         }
@@ -255,16 +257,44 @@ impl FileTextData {
     }
 
     /// Returns the file's text, decompressing it on the spot if needed.
+    ///
+    /// Readers frequently take several slices of the same file in a row
+    /// (`FileRange` lookups, searches), so the last decompressed text is cached
+    /// per thread. The cache key fingerprints the compressed bytes, never the
+    /// pointer, so a reused allocation cannot alias a stale entry.
     pub fn as_str(&self) -> FileTextRef<'static> {
         match self {
             Self::Plain(text) => FileTextRef::Shared(text.clone()),
-            Self::Compressed(data) => FileTextRef::Owned(
-                String::from_utf8(
-                    lz4_flex::decompress_size_prepended(data)
-                        .expect("file text is not a valid lz4 stream"),
-                )
-                .expect("file text is not valid utf-8"),
-            ),
+            Self::Compressed(data) => {
+                thread_local! {
+                    static LAST_TEXT: RefCell<Option<(u64, Arc<str>)>> =
+                        const { RefCell::new(None) };
+                }
+                LAST_TEXT.with(|cache| {
+                    let key = {
+                        let mut hasher = FxHasher::default();
+                        data.hash(&mut hasher);
+                        hasher.finish()
+                    };
+                    let cache = &mut *cache.borrow_mut();
+                    if let Some((cached_key, text)) = cache
+                        && *cached_key == key
+                    {
+                        return FileTextRef::Shared(text.clone());
+                    }
+                    let text = String::from_utf8(
+                        lz4_flex::decompress_size_prepended(data)
+                            .expect("file text is not a valid lz4 stream"),
+                    )
+                    .expect("file text is not valid utf-8");
+                    if text.len() > FILE_TEXT_CACHE_MAX_SIZE {
+                        return FileTextRef::Owned(text);
+                    }
+                    let text: Arc<str> = Arc::from(text.as_str());
+                    *cache = Some((key, text.clone()));
+                    FileTextRef::Shared(text)
+                })
+            }
         }
     }
 }
