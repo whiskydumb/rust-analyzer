@@ -8,7 +8,7 @@
 //! crates.io, and we can reduce this to trivial glue code.
 
 use std::{
-    fs,
+    fs, mem,
     path::{Component, Path},
     sync::atomic::AtomicUsize,
 };
@@ -140,7 +140,7 @@ impl NotifyActor {
                             if do_watch {
                                 _ = entry_tx.send(entry.clone());
                             }
-                            let files = Self::load_entry(
+                            Self::load_entry(
                                 |f| _ = watch_tx.send(f.to_owned()),
                                 entry,
                                 do_watch,
@@ -154,8 +154,8 @@ impl NotifyActor {
                                         config_version,
                                     });
                                 },
+                                |files| self.send(loader::Message::Loaded { files }),
                             );
-                            self.send(loader::Message::Loaded { files });
                             self.send(loader::Message::Progress {
                                 n_total,
                                 n_done: LoadingProgress::Progress(
@@ -282,21 +282,34 @@ impl NotifyActor {
         entry: loader::Entry,
         do_watch: bool,
         send_message: impl Fn(AbsPathBuf),
-    ) -> Vec<(AbsPathBuf, Option<Vec<u8>>)> {
+        mut send_files: impl FnMut(Vec<(AbsPathBuf, Option<Vec<u8>>)>),
+    ) {
+        /// Flush accumulated files once their contents reach this many bytes,
+        /// so a whole source root is never held in memory at once.
+        const FILE_CHUNK_BYTES: usize = 2 * 1024 * 1024;
+
+        let mut chunk: Vec<(AbsPathBuf, Option<Vec<u8>>)> = Vec::new();
+        let mut chunk_bytes = 0usize;
+        let mut push_file = |file: AbsPathBuf, contents: Option<Vec<u8>>| {
+            chunk_bytes += contents.as_ref().map_or(0, Vec::len);
+            chunk.push((file, contents));
+            if chunk_bytes >= FILE_CHUNK_BYTES {
+                send_files(mem::take(&mut chunk));
+                chunk_bytes = 0;
+            }
+        };
+
         match entry {
-            loader::Entry::Files(files) => files
-                .into_iter()
-                .map(|file| {
+            loader::Entry::Files(files) => {
+                for file in files {
                     if do_watch {
                         watch(file.as_ref());
                     }
                     let contents = read(file.as_path());
-                    (file, contents)
-                })
-                .collect::<Vec<_>>(),
+                    push_file(file, contents);
+                }
+            }
             loader::Entry::Directories(dirs) => {
-                let mut res = Vec::new();
-
                 for root in &dirs.include {
                     send_message(root.clone());
                     let walkdir =
@@ -342,13 +355,15 @@ impl NotifyActor {
                         Some(abs_path)
                     });
 
-                    res.extend(files.map(|file| {
+                    for file in files {
                         let contents = read(file.as_path());
-                        (file, contents)
-                    }));
+                        push_file(file, contents);
+                    }
                 }
-                res
             }
+        }
+        if !chunk.is_empty() {
+            send_files(chunk);
         }
     }
 

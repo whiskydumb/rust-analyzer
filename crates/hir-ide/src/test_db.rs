@@ -96,6 +96,16 @@ impl SourceDatabase for TestDB {
         files.set_file_text_with_durability(self, file_id, text, durability);
     }
 
+    fn set_file_text_data_with_durability(
+        &mut self,
+        file_id: base_db::FileId,
+        text: base_db::FileTextData,
+        durability: Durability,
+    ) {
+        let files = Arc::clone(&self.files);
+        files.set_file_text_data_with_durability(self, file_id, text, durability);
+    }
+
     /// Source root of the file.
     fn source_root(&self, source_root_id: SourceRootId) -> SourceRootInput {
         self.files.source_root(source_root_id)

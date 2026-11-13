@@ -18,7 +18,8 @@ use hir_expand::proc_macro::{
 use ide_db::{
     ChangeWithProcMacros, FxHashMap, RootDatabase,
     base_db::{
-        CrateGraphBuilder, Env, ProcMacroLoadingError, SourceDatabase, SourceRoot, SourceRootId,
+        CrateGraphBuilder, Env, FileTextData, ProcMacroLoadingError, SourceDatabase, SourceRoot,
+        SourceRootId,
     },
     prime_caches,
 };
@@ -523,6 +524,21 @@ fn load_crate_graph_into_db(
 
     db.enable_proc_attr_macros();
 
+    // Convert pending Vfs changes into `FileTextData`. Library files are
+    // compressed here, immediately after their batch was read, so the plain
+    // text never outlives one loader message.
+    let drain_changes = |vfs: &mut vfs::Vfs, analysis_change: &mut ChangeWithProcMacros| {
+        for (_, file) in vfs.take_changes() {
+            if let vfs::Change::Create(v, _) | vfs::Change::Modify(v, _) = file.change
+                && let Ok(text) = String::from_utf8(v)
+            {
+                let compress = source_root_config.path_is_library(vfs.file_path(file.file_id));
+                analysis_change
+                    .change_file_data(file.file_id, Some(FileTextData::new(&text, compress)))
+            }
+        }
+    };
+
     // wait until Vfs has loaded all roots
     for task in receiver {
         match task {
@@ -537,17 +553,12 @@ fn load_crate_graph_into_db(
                 for (path, contents) in files {
                     vfs.set_file_contents(path.into(), contents);
                 }
+                drain_changes(vfs, &mut analysis_change);
             }
         }
     }
-    let changes = vfs.take_changes();
-    for (_, file) in changes {
-        if let vfs::Change::Create(v, _) | vfs::Change::Modify(v, _) = file.change
-            && let Ok(text) = String::from_utf8(v)
-        {
-            analysis_change.change_file(file.file_id, Some(text))
-        }
-    }
+    // Files loaded via `load_sync` outside of the loader's messages.
+    drain_changes(vfs, &mut analysis_change);
     let source_roots = source_root_config.partition(vfs);
     analysis_change.set_roots(source_roots);
 
