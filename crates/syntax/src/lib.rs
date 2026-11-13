@@ -44,7 +44,11 @@ pub mod hacks;
 pub mod syntax_editor;
 pub mod utils;
 
-use std::{marker::PhantomData, ops::Range};
+use std::{
+    marker::PhantomData,
+    mem::{size_of, size_of_val},
+    ops::Range,
+};
 
 use stdx::format_to;
 use triomphe::Arc;
@@ -102,6 +106,44 @@ impl<T> Parse<T> {
         validation::validate(&self.syntax_node(), &mut errors);
         errors
     }
+
+    /// An approximation of the number of bytes this parse result allocates on
+    /// the heap (excluding `self` itself).
+    ///
+    /// Green nodes and tokens share their allocation with the whole
+    /// `HeaderSlice`, so `size_of_val` gives the exact allocation size.
+    /// Trivia is stored in separate `Box<[GreenToken]>` arrays inside each
+    /// token header and has to be accounted for recursively.
+    pub fn heap_size(&self) -> usize {
+        self.green.as_ref().map_or(0, |it| green_node_heap_size(it))
+            + self.errors.as_ref().map_or(0, |errors| {
+                errors.len() * size_of::<SyntaxError>()
+                    + errors.iter().map(SyntaxError::heap_size).sum::<usize>()
+            })
+    }
+}
+
+fn green_node_heap_size(node: &rowan::GreenNodeData) -> usize {
+    size_of_val(node)
+        + node
+            .children()
+            .map(|child| match child {
+                NodeOrToken::Node(node) => green_node_heap_size(node),
+                NodeOrToken::Token(token) => green_token_heap_size(token),
+            })
+            .sum::<usize>()
+}
+
+fn green_token_heap_size(token: &rowan::GreenTokenData) -> usize {
+    size_of_val(token)
+        + (token.leading_trivia().len() + token.trailing_trivia().len())
+            * size_of::<rowan::GreenToken>()
+        + token
+            .leading_trivia()
+            .iter()
+            .chain(token.trailing_trivia())
+            .map(|it| green_token_heap_size(it))
+            .sum::<usize>()
 }
 
 impl<T: AstNode> Parse<T> {

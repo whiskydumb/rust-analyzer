@@ -1,6 +1,6 @@
 //! A desugared representation of paths like `crate::foo` or `<Type as Trait>::bar`.
 
-use std::iter;
+use std::{iter, mem::size_of_val};
 
 use crate::{
     lang_item::LangItemTarget,
@@ -24,6 +24,45 @@ pub enum Path {
     /// A link to a lang item. It is used in desugaring of things like `it?`. We can show these
     /// links via a normal path since they might be private and not accessible in the usage place.
     LangItem(LangItemTarget, Option<Name>),
+}
+
+impl Path {
+    /// An approximation of the number of bytes this path allocates on the heap
+    /// (excluding `self` itself).
+    pub fn heap_size(&self) -> usize {
+        match self {
+            Path::Normal(it) => size_of_val(&**it) + it.heap_size(),
+            _ => 0,
+        }
+    }
+}
+
+impl NormalPath {
+    fn heap_size(&self) -> usize {
+        size_of_val(&*self.generic_args)
+            + self
+                .generic_args
+                .iter()
+                .map(|args| args.as_ref().map_or(0, GenericArgs::heap_size))
+                .sum::<usize>()
+    }
+}
+
+impl GenericArgs {
+    /// An approximation of the number of bytes these args allocate on the heap
+    /// (excluding `self` itself).
+    pub fn heap_size(&self) -> usize {
+        size_of_val(&*self.args)
+            + size_of_val(&*self.bindings)
+            + self
+                .bindings
+                .iter()
+                .map(|it| {
+                    it.args.as_ref().map_or(0, GenericArgs::heap_size)
+                        + it.bounds.iter().map(TypeBound::heap_size).sum::<usize>()
+                })
+                .sum::<usize>()
+    }
 }
 
 // This type is being used a lot, make sure it doesn't grow unintentionally.

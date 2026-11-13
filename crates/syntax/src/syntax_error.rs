@@ -25,6 +25,10 @@ impl SyntaxError {
         self.1 = range;
         self
     }
+
+    pub(crate) fn heap_size(&self) -> usize {
+        self.0.capacity()
+    }
 }
 
 impl fmt::Display for SyntaxError {

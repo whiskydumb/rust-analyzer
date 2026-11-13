@@ -40,6 +40,15 @@ pub struct SyntaxFixupUndoInfo {
 
 impl SyntaxFixupUndoInfo {
     pub(crate) const NONE: Self = SyntaxFixupUndoInfo { original: None };
+
+    /// An approximation of the number of bytes this struct allocates on the
+    /// heap (excluding `self` itself).
+    pub fn heap_size(&self) -> usize {
+        self.original.as_ref().map_or(0, |original| {
+            original.capacity() * std::mem::size_of::<TopSubtree>()
+                + original.iter().map(TopSubtree::heap_size).sum::<usize>()
+        })
+    }
 }
 
 // We mark spans with `FIXUP_DUMMY_AST_ID` to indicate that they are fake.

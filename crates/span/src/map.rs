@@ -21,6 +21,11 @@ pub struct SpanMap {
 }
 
 impl SpanMap {
+    /// The number of bytes this map allocates on the heap (excluding `self` itself).
+    pub fn heap_size(&self) -> usize {
+        self.spans.capacity() * std::mem::size_of::<(TextSize, Span)>()
+    }
+
     /// Creates a new empty [`SpanMap`].
     pub fn empty() -> Self {
         Self { spans: Vec::new(), matched_arm: None }

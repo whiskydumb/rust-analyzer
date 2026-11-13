@@ -228,6 +228,25 @@ pub enum AttrInput {
     TokenTree(tt::TopSubtree),
 }
 
+impl Attr {
+    /// An approximation of the number of bytes this attribute allocates on the
+    /// heap (excluding `self` itself).
+    pub fn heap_size(&self) -> usize {
+        self.input.as_deref().map_or(0, AttrInput::heap_size)
+    }
+}
+
+impl AttrInput {
+    /// An approximation of the number of bytes this attribute input allocates
+    /// on the heap (excluding `self` itself).
+    pub fn heap_size(&self) -> usize {
+        match self {
+            AttrInput::Literal(_) => 0,
+            AttrInput::TokenTree(tt) => tt.heap_size(),
+        }
+    }
+}
+
 impl fmt::Display for AttrInput {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

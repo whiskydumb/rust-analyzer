@@ -338,3 +338,66 @@ impl TestDB {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod lru_probe_tests {
+    use super::*;
+    use base_db::{EditionedFileId, FileId as VfsFileId};
+    use salsa::Database;
+    use span::Edition;
+
+    fn query_heap(db: &mut TestDB, needle: &str) -> usize {
+        let info = (db as &mut dyn salsa::Database).memory_usage();
+        info.queries
+            .iter()
+            .filter(|(name, _)| name.contains(needle))
+            .map(|(_, q)| q.heap_size_of_fields().unwrap_or(0))
+            .sum()
+    }
+
+    #[test]
+    fn lru_evicts_parse_memos() {
+        let mut db = TestDB::default();
+        const N: u32 = 300;
+        for i in 0..N {
+            db.set_file_text(VfsFileId::from_raw(i), "fn f() {}\n");
+        }
+        for i in 0..N {
+            let eid = EditionedFileId::new(&db, VfsFileId::from_raw(i), Edition::CURRENT);
+            let _ = eid.parse(&db);
+        }
+        let before = query_heap(&mut db, "parse_");
+        db.trigger_lru_eviction();
+        let after = query_heap(&mut db, "parse_");
+        // The `lru = 128` cap on `parse` keeps at most 128 values; memo metadata
+        // stays allocated so the entry count does not shrink.
+        assert!(before > after, "eviction did not shrink parse heap: {before} -> {after}");
+        assert!(after <= 128 * 2_000, "parse heap above cap after eviction: {after}");
+    }
+
+    #[test]
+    fn lru_evicts_parse_memos_after_revision_bump() {
+        let mut db = TestDB::default();
+        const N: u32 = 300;
+        for i in 0..N {
+            db.set_file_text(VfsFileId::from_raw(i), "fn f() {}\n");
+        }
+        let parse_all = |db: &TestDB| {
+            for i in 0..N {
+                let eid = EditionedFileId::new(db, VfsFileId::from_raw(i), Edition::CURRENT);
+                let _ = eid.parse(db);
+            }
+        };
+        parse_all(&db);
+        // A salsa input write bumps the revision, running the same eviction path as
+        // `trigger_lru_eviction` in the middle of a run.
+        db.set_file_text(VfsFileId::from_raw(0), "fn g() {}\n");
+        parse_all(&db);
+        db.trigger_lru_eviction();
+        let heap1 = query_heap(&mut db, "parse_");
+        db.trigger_lru_eviction();
+        let heap2 = query_heap(&mut db, "parse_");
+        assert!(heap1 <= 128 * 2_000, "heap after trigger: {heap1}");
+        assert_eq!(heap1, heap2);
+    }
+}

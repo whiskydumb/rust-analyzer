@@ -1994,7 +1994,25 @@ fn cast_kind<'db>(
     })
 }
 
-#[salsa::tracked(returns(as_ref), cycle_result = mir_body_for_closure_cycle_result)]
+fn mir_lower_error_heap_size(err: &MirLowerError<'_>) -> usize {
+    match err {
+        MirLowerError::ConstEvalError(msg, _) => msg.len(),
+        MirLowerError::UnresolvedMethod(it)
+        | MirLowerError::NotSupported(it)
+        | MirLowerError::ImplementationError(it) => it.capacity(),
+        MirLowerError::UnresolvedName { path, .. } => path.heap_size(),
+        _ => 0,
+    }
+}
+
+pub(crate) fn mir_body_result_heap_size(res: &Result<'_, MirBody<'_>>) -> usize {
+    match res {
+        Ok(it) => it.heap_size(),
+        Err(it) => mir_lower_error_heap_size(it),
+    }
+}
+
+#[salsa::tracked(lru = 2048, returns(as_ref), cycle_result = mir_body_for_closure_cycle_result, heap_size = mir_body_result_heap_size)]
 pub fn mir_body_for_closure_query<'db>(
     db: &'db dyn HirDatabase,
     closure: InternedClosureId<'db>,
@@ -2154,7 +2172,7 @@ pub fn mir_body_for_closure_query<'db>(
     Ok(ctx.result)
 }
 
-#[salsa::tracked(returns(as_ref), cycle_result = mir_body_cycle_result)]
+#[salsa::tracked(lru = 2048, returns(as_ref), cycle_result = mir_body_cycle_result, heap_size = mir_body_result_heap_size)]
 pub fn mir_body_query<'db>(
     db: &'db dyn HirDatabase,
     def: InferBodyId<'db>,

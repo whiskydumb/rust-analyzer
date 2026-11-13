@@ -58,7 +58,10 @@ pub mod proc_macro;
 #[cfg(test)]
 mod tests;
 
-use std::ops::{Deref, DerefMut, Index, IndexMut};
+use std::{
+    mem::{size_of, size_of_val},
+    ops::{Deref, DerefMut, Index, IndexMut},
+};
 
 use base_db::{Crate, SourceDatabase};
 use either::Either;
@@ -385,7 +388,86 @@ pub fn crate_def_map(db: &dyn SourceDatabase, crate_id: Crate) -> &DefMap {
     crate_local_def_map(db, crate_id).def_map(db)
 }
 
-#[salsa::tracked]
+impl LocalDefMap {
+    /// An approximation of the number of bytes this map allocates on the heap
+    /// (excluding `self` itself).
+    fn heap_size(&self) -> usize {
+        self.extern_prelude.capacity()
+            * (size_of::<Name>() + size_of::<(ModuleId, Option<ExternCrateId>)>())
+    }
+}
+
+impl DefMapCrateData {
+    /// An approximation of the number of bytes this allocates on the heap
+    /// (excluding `self` itself).
+    fn heap_size(&self) -> usize {
+        self.exported_derives.capacity() * (size_of::<MacroId>() + size_of::<Box<[Name]>>())
+            + self.exported_derives.values().map(|it| size_of_val(&**it)).sum::<usize>()
+            + self.fn_proc_macro_mapping.capacity()
+                * (size_of::<FunctionId>() + size_of::<ProcMacroId>())
+            + self.fn_proc_macro_mapping_back.capacity()
+                * (size_of::<ProcMacroId>() + size_of::<FunctionId>())
+            + self.registered_tools.capacity() * size_of::<Symbol>()
+    }
+}
+
+impl DefMap {
+    /// An approximation of the number of bytes this def map allocates on the
+    /// heap (excluding `self` itself).
+    pub(crate) fn heap_size(&self) -> usize {
+        self.modules.heap_size()
+            + self.macro_use_prelude.heap_size()
+            + self.derive_helpers_in_scope.heap_size()
+            + self
+                .derive_helpers_in_scope
+                .values()
+                .map(|it| {
+                    it.capacity()
+                        * size_of::<(Name, MacroId, Either<MacroCallId, BuiltinDeriveImplId>)>()
+                })
+                .sum::<usize>()
+            + self.macro_def_to_macro_id.heap_size()
+            + self.diagnostics.capacity() * size_of::<DefDiagnostic>()
+            + self
+                .diagnostics
+                .iter()
+                .map(|it| match &it.kind {
+                    diagnostics::DefDiagnosticKind::UnresolvedModule { candidates, .. } => {
+                        size_of_val(&**candidates)
+                            + candidates.iter().map(String::capacity).sum::<usize>()
+                    }
+                    _ => 0,
+                })
+                .sum::<usize>()
+            + self.data.heap_size()
+    }
+}
+
+impl ModulesMap {
+    /// An approximation of the number of bytes this map allocates on the heap
+    /// (excluding `self` itself).
+    fn heap_size(&self) -> usize {
+        self.inner.heap_size() + self.inner.values().map(ModuleData::heap_size).sum::<usize>()
+    }
+}
+
+impl ModuleData {
+    /// An approximation of the number of bytes this allocates on the heap
+    /// (excluding `self` itself).
+    fn heap_size(&self) -> usize {
+        self.children.heap_size() + self.scope.heap_size()
+    }
+}
+
+fn def_map_heap_size(def_map: &DefMap) -> usize {
+    def_map.heap_size()
+}
+
+fn def_map_pair_heap_size((def_map, local): &(DefMap, LocalDefMap)) -> usize {
+    def_map.heap_size() + local.heap_size()
+}
+
+#[salsa::tracked(heap_size = def_map_pair_heap_size)]
 pub(crate) struct DefMapPair<'db> {
     #[tracked]
     #[returns(ref)]
@@ -428,7 +510,7 @@ pub(crate) fn crate_local_def_map(db: &dyn SourceDatabase, crate_id: Crate) -> D
     DefMapPair::new(db, def_map, local_def_map)
 }
 
-#[salsa::tracked(returns(ref))]
+#[salsa::tracked(returns(ref), heap_size = def_map_heap_size)]
 pub fn block_def_map<'db>(db: &'db dyn SourceDatabase, block_id: BlockIdLt<'db>) -> DefMap {
     let block_id = unsafe { block_id.to_static() };
     let ast_id = block_id.ast_id(db);

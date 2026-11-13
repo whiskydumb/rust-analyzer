@@ -7,6 +7,7 @@
 use std::{
     borrow::Cow,
     convert::Infallible,
+    mem::size_of,
     ops::{self, ControlFlow},
 };
 
@@ -154,8 +155,29 @@ impl AttrsOrCfg {
     }
 }
 
+impl AttrsOrCfg {
+    /// An approximation of the number of bytes this allocates on the heap
+    /// (excluding `self` itself).
+    pub(crate) fn heap_size(&self) -> usize {
+        match self {
+            AttrsOrCfg::Enabled { attrs } => attrs.heap_size(),
+            AttrsOrCfg::CfgDisabled(it) => {
+                std::mem::size_of_val(&**it) + it.0.heap_size() + it.1.heap_size()
+            }
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct AttrsOwned(Box<[Attr]>);
+
+impl AttrsOwned {
+    /// An approximation of the number of bytes this allocates on the heap
+    /// (excluding `self` itself).
+    fn heap_size(&self) -> usize {
+        self.0.len() * size_of::<Attr>() + self.0.iter().map(Attr::heap_size).sum::<usize>()
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Attrs<'a>(&'a [Attr]);

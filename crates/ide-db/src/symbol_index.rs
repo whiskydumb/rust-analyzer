@@ -371,7 +371,7 @@ impl<'db> SymbolIndex<'db> {
         db: &'db dyn HirDatabase,
         source_root_id: SourceRootId,
     ) -> &'db SymbolIndex<'db> {
-        #[salsa::tracked(returns(ref))]
+        #[salsa::tracked(returns(ref), heap_size = SymbolIndex::memory_size)]
         fn library_symbols<'db>(
             db: &'db dyn HirDatabase,
             source_root_id: InternedSourceRootId<'db>,
@@ -399,7 +399,7 @@ impl<'db> SymbolIndex<'db> {
     /// The symbol index for a given module. These modules should only be in source roots that
     /// are inside local_roots.
     pub fn module_symbols(db: &dyn HirDatabase, module: Module) -> &SymbolIndex<'_> {
-        #[salsa::tracked(returns(ref))]
+        #[salsa::tracked(returns(ref), heap_size = SymbolIndex::memory_size)]
         fn module_symbols<'db>(
             db: &'db dyn HirDatabase,
             module: hir::ModuleId,

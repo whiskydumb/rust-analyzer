@@ -25,6 +25,7 @@ use std::{
     fmt,
     hash::{BuildHasher, Hash, Hasher},
     marker::PhantomData,
+    mem::size_of,
 };
 
 use la_arena::{Arena, Idx, RawIdx};
@@ -630,6 +631,13 @@ enum ContainsItems {
 }
 
 impl AstIdMap {
+    /// An approximation of the number of bytes this map allocates on the heap
+    /// (excluding `self` itself).
+    pub fn heap_size(&self) -> usize {
+        self.arena.len() * size_of::<(SyntaxNodePtr, ErasedFileAstId)>()
+            + (self.ptr_map.capacity() + self.id_map.capacity()) * size_of::<ArenaId>()
+    }
+
     pub fn from_source(node: &SyntaxNode) -> AstIdMap {
         assert!(node.parent().is_none());
         let mut res = AstIdMap::default();

@@ -39,6 +39,7 @@ mod tests;
 use std::{
     fmt::{self, Debug},
     hash::Hash,
+    mem::{size_of, size_of_val},
     ops::Index,
     sync::OnceLock,
 };
@@ -137,7 +138,15 @@ pub fn file_item_tree(db: &dyn SourceDatabase, file_id: HirFileId, krate: Crate)
     }
 }
 
-#[salsa::tracked(returns(ref))]
+fn item_tree_heap_size(item_tree: &ItemTree) -> usize {
+    item_tree.heap_size()
+}
+
+fn box_item_tree_heap_size(item_tree: &Option<Box<ItemTree>>) -> usize {
+    item_tree.as_deref().map_or(0, |it| size_of::<ItemTree>() + it.heap_size())
+}
+
+#[salsa::tracked(returns(ref), heap_size = box_item_tree_heap_size)]
 fn file_item_tree_query(
     db: &dyn SourceDatabase,
     file_id: HirFileId,
@@ -188,7 +197,7 @@ fn file_item_tree_query(
     }
 }
 
-#[salsa::tracked(returns(ref))]
+#[salsa::tracked(returns(ref), heap_size = item_tree_heap_size)]
 pub(crate) fn block_item_tree_query(
     db: &dyn SourceDatabase,
     block: BlockId,
@@ -260,6 +269,19 @@ impl ItemTree {
         ItemTreeDataStats { traits, impls, mods, macro_calls, macro_rules }
     }
 
+    /// An approximation of the number of bytes this tree allocates on the heap
+    /// (excluding `self` itself).
+    pub(crate) fn heap_size(&self) -> usize {
+        size_of_val(&*self.top_level)
+            + self.attrs.capacity() * size_of::<(ModItemId, AttrsOrCfg)>()
+            + self.attrs.iter().map(|(_, attrs)| attrs.heap_size()).sum::<usize>()
+            + self.vis.arena.capacity() * size_of::<RawVisibility>()
+            + self.big_data.capacity() * size_of::<(FileAstId<ast::Item>, BigModItem)>()
+            + self.big_data.iter().map(|(_, item)| item.heap_size()).sum::<usize>()
+            + self.small_data.capacity() * size_of::<(FileAstId<ast::Item>, SmallModItem)>()
+            + self.small_data.iter().map(|(_, item)| item.heap_size()).sum::<usize>()
+    }
+
     pub fn pretty_print(&self, db: &dyn SourceDatabase, edition: Edition) -> String {
         pretty::print_item_tree(db, self, edition)
     }
@@ -303,12 +325,34 @@ enum SmallModItem {
     Union(Union),
 }
 
+impl SmallModItem {
+    fn heap_size(&self) -> usize {
+        match self {
+            SmallModItem::ExternBlock(it) => size_of_val(&*it.children),
+            _ => 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum BigModItem {
     ExternCrate(ExternCrate),
     Mod(Mod),
     Use(Use),
     Struct(Struct),
+}
+
+impl BigModItem {
+    fn heap_size(&self) -> usize {
+        match self {
+            BigModItem::Use(it) => it.use_tree.heap_size(),
+            BigModItem::Mod(it) => match &it.kind {
+                ModKind::Inline { items } => size_of_val(&**items),
+                ModKind::Outline => 0,
+            },
+            _ => 0,
+        }
+    }
 }
 
 // `ModItem` is stored a bunch in `ItemTree`'s so we pay the max for each item. It should stay as
@@ -499,6 +543,19 @@ pub struct Use {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct UseTree {
     kind: UseTreeKind,
+}
+
+impl UseTree {
+    /// An approximation of the number of bytes this use tree allocates on the
+    /// heap (excluding `self` itself).
+    fn heap_size(&self) -> usize {
+        match &self.kind {
+            UseTreeKind::Prefixed { list, .. } => {
+                size_of_val(&**list) + list.iter().map(UseTree::heap_size).sum::<usize>()
+            }
+            _ => 0,
+        }
+    }
 }
 
 // FIXME: Would be nice to encode `None` into this

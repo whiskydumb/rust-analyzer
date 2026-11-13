@@ -1,6 +1,10 @@
 //! MIR definitions and implementation
 
-use std::{fmt::Display, iter};
+use std::{
+    fmt::Display,
+    iter,
+    mem::{size_of, size_of_val},
+};
 
 use hir_def::{
     FieldId, LocalFieldId, StaticId, UnionId, VariantId,
@@ -1011,6 +1015,53 @@ pub struct BasicBlock {
     pub is_cleanup: bool,
 }
 
+impl BasicBlock {
+    fn heap_size(&self) -> usize {
+        self.statements.capacity() * size_of::<Statement>()
+            + self.statements.iter().map(|it| it.kind.heap_size()).sum::<usize>()
+            + self.terminator.as_ref().map_or(0, |it| it.kind.heap_size())
+    }
+}
+
+impl StatementKind {
+    fn heap_size(&self) -> usize {
+        match self {
+            StatementKind::Assign(_, rvalue) => rvalue.heap_size(),
+            _ => 0,
+        }
+    }
+}
+
+impl Rvalue {
+    fn heap_size(&self) -> usize {
+        match self {
+            Rvalue::Aggregate(_, it) => size_of_val(&**it),
+            _ => 0,
+        }
+    }
+}
+
+impl TerminatorKind {
+    fn heap_size(&self) -> usize {
+        match self {
+            TerminatorKind::Call { args, .. } => size_of_val(&**args),
+            TerminatorKind::SwitchInt { targets, .. } => targets.heap_size(),
+            _ => 0,
+        }
+    }
+}
+
+impl SwitchTargets {
+    fn heap_size(&self) -> usize {
+        (if self.values.spilled() { self.values.capacity() * size_of::<u128>() } else { 0 })
+            + (if self.targets.spilled() {
+                self.targets.capacity() * size_of::<BasicBlockId>()
+            } else {
+                0
+            })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, SalsaValue)]
 pub struct MirBody<'db> {
     pub basic_blocks: Arena<BasicBlock>,
@@ -1026,6 +1077,29 @@ pub struct MirBody<'db> {
 }
 
 impl MirBody<'_> {
+    /// An approximation of the number of bytes this body allocates on the heap
+    /// (excluding `self` itself).
+    pub fn heap_size(&self) -> usize {
+        self.basic_blocks.len() * size_of::<BasicBlock>()
+            + self.basic_blocks.iter().map(|(_, it)| it.heap_size()).sum::<usize>()
+            + self.locals.len() * size_of::<Local>()
+            + self.binding_locals.iter().count() * size_of::<Option<LocalId>>()
+            + self.upvar_locals.heap_size()
+            + self
+                .upvar_locals
+                .values()
+                .map(|it| {
+                    it.capacity() * size_of::<(LocalId, crate::closure_analysis::Place)>()
+                        + it
+                            .iter()
+                            .map(|(_, place)| size_of_val(&*place.projections))
+                            .sum::<usize>()
+                })
+                .sum::<usize>()
+            + self.param_locals.capacity() * size_of::<LocalId>()
+            + self.closures.capacity() * size_of::<InternedClosureId<'_>>()
+    }
+
     pub fn local_to_binding_map(&self) -> ArenaMap<LocalId, BindingId> {
         self.binding_locals.iter().map(|(it, y)| (*y, it)).collect()
     }

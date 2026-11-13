@@ -61,9 +61,32 @@ enum IsTraitAssocItem {
 
 type ImportMapIndex = FxIndexMap<ItemInNs, (SmallVec<[ImportInfo; 1]>, IsTraitAssocItem)>;
 
+impl ImportMap {
+    /// An approximation of the number of bytes this map allocates on the heap
+    /// (excluding `self` itself).
+    fn heap_size(&self) -> usize {
+        self.item_to_info_map.capacity()
+            * (size_of::<ItemInNs>()
+                + size_of::<(SmallVec<[ImportInfo; 1]>, IsTraitAssocItem)>())
+            + self
+                .item_to_info_map
+                .values()
+                .map(|(infos, _)| {
+                    if infos.spilled() { infos.capacity() * size_of::<ImportInfo>() } else { 0 }
+                })
+                .sum::<usize>()
+            + self.importables.capacity() * size_of::<(ItemInNs, u32)>()
+            + self.fst.as_fst().size()
+    }
+}
+
+fn import_map_heap_size(map: &ImportMap) -> usize {
+    map.heap_size()
+}
+
 #[salsa::tracked]
 impl ImportMap {
-    #[salsa::tracked(returns(ref))]
+    #[salsa::tracked(returns(ref), heap_size = import_map_heap_size)]
     pub fn of(db: &dyn SourceDatabase, krate: Crate) -> Self {
         Self::import_map_query_impl(db, krate)
     }

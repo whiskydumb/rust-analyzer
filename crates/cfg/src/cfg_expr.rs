@@ -56,6 +56,21 @@ pub enum CfgExpr {
     Not(Box<CfgExpr>),
 }
 
+impl CfgExpr {
+    /// An approximation of the number of bytes this expression allocates on
+    /// the heap (excluding `self` itself).
+    pub fn heap_size(&self) -> usize {
+        match self {
+            CfgExpr::All(it) | CfgExpr::Any(it) => {
+                std::mem::size_of_val(&**it)
+                    + it.iter().map(CfgExpr::heap_size).sum::<usize>()
+            }
+            CfgExpr::Not(it) => it.heap_size(),
+            _ => 0,
+        }
+    }
+}
+
 impl fmt::Display for CfgExpr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

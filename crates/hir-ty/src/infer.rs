@@ -37,6 +37,7 @@ use std::{
     convert::identity,
     fmt,
     hash::Hash,
+    mem::size_of_val,
     ops::Deref,
 };
 
@@ -1090,9 +1091,96 @@ impl PartialOrd for UpvarCapture {
     }
 }
 
+fn inference_result_heap_size(res: &InferenceResult<'_>) -> usize {
+    res.heap_size()
+}
+
+fn smallvec_heap_size<A: smallvec::Array>(v: &SmallVec<A>) -> usize {
+    if v.spilled() { v.capacity() * size_of::<A::Item>() } else { 0 }
+}
+
+fn place_heap_size(place: &crate::closure_analysis::Place) -> usize {
+    place.projections.capacity() * size_of::<crate::closure_analysis::Projection>()
+}
+
+impl ClosureData {
+    /// An approximation of the number of bytes this allocates on the heap
+    /// (excluding `self` itself).
+    fn heap_size(&self) -> usize {
+        self.min_captures.capacity() * (size_of::<BindingId>() + size_of::<MinCaptureList>())
+            + self
+                .min_captures
+                .values()
+                .map(|it| {
+                    it.capacity() * size_of::<CapturedPlace>()
+                        + it.iter().map(|it| place_heap_size(&it.place)).sum::<usize>()
+                        + it.iter().map(|it| smallvec_heap_size(&it.info.sources)).sum::<usize>()
+                        + it
+                            .iter()
+                            .flat_map(|it| it.info.sources.iter())
+                            .map(CaptureSourceStack::heap_size)
+                            .sum::<usize>()
+                })
+                .sum::<usize>()
+            + size_of_val(&*self.fake_reads)
+            + self
+                .fake_reads
+                .iter()
+                .map(|(place, _, stack)| {
+                    place_heap_size(place)
+                        + smallvec_heap_size(stack)
+                        + stack.iter().map(CaptureSourceStack::heap_size).sum::<usize>()
+                })
+                .sum::<usize>()
+    }
+}
+
+impl CaptureSourceStack {
+    fn heap_size(&self) -> usize {
+        match &self.0 {
+            CaptureSourceStackRepr::Many(it) => it.capacity() * size_of::<ExprOrPatIdPacked>(),
+            _ => 0,
+        }
+    }
+}
+
+impl<'db> InferenceResult<'db> {
+    /// An approximation of the number of bytes this result allocates on the
+    /// heap (excluding `self` itself).
+    pub(crate) fn heap_size(&self) -> usize {
+        self.method_resolutions.heap_size()
+            + self.field_resolutions.heap_size()
+            + self.variant_resolutions.heap_size()
+            + self.assoc_resolutions.heap_size()
+            + self.tuple_field_access_types.capacity() * size_of::<StoredTys>()
+            + self.type_of_expr.iter().count() * size_of::<Option<StoredTy>>()
+            + self.type_of_pat.iter().count() * size_of::<Option<StoredTy>>()
+            + self.type_of_binding.iter().count() * size_of::<Option<StoredTy>>()
+            + self.type_of_type_placeholder.heap_size()
+            + self.type_of_opaque.heap_size()
+            + self.diagnostics.capacity() * size_of::<InferenceDiagnostic>()
+            + self.nodes_with_type_mismatches.heap_size()
+            + self.expr_adjustments.capacity()
+                * (size_of::<ExprId>() + size_of::<Box<[Adjustment]>>())
+            + self.expr_adjustments.values().map(|it| size_of_val(&**it)).sum::<usize>()
+            + self.pat_adjustments.heap_size()
+            + self
+                .pat_adjustments
+                .values()
+                .map(|it| it.capacity() * size_of::<PatAdjustment>())
+                .sum::<usize>()
+            + self.binding_modes.iter().count() * size_of::<Option<BindingMode>>()
+            + self.skipped_ref_pats.heap_size()
+            + self.coercion_casts.heap_size()
+            + self.closures_data.heap_size()
+            + self.closures_data.values().map(ClosureData::heap_size).sum::<usize>()
+            + self.defined_anon_consts.capacity() * size_of::<AnonConstId<'_>>()
+    }
+}
+
 #[salsa::tracked]
 impl<'db> InferenceResult<'db> {
-    #[salsa::tracked(returns(ref), cycle_result = infer_cycle_result)]
+    #[salsa::tracked(lru = 2048, returns(ref), cycle_result = infer_cycle_result, heap_size = inference_result_heap_size)]
     fn for_body(db: &dyn HirDatabase, def: DefWithBodyId) -> InferenceResult<'_> {
         infer_query(db, def)
     }
@@ -1102,7 +1190,7 @@ impl<'db> InferenceResult<'db> {
     /// Returns an `InferenceResult` containing type information for array lengths,
     /// const generic arguments, and other const expressions appearing in type
     /// positions within the item's signature.
-    #[salsa::tracked(returns(ref), cycle_result = infer_anon_const_cycle_result)]
+    #[salsa::tracked(lru = 2048, returns(ref), cycle_result = infer_anon_const_cycle_result, heap_size = inference_result_heap_size)]
     fn for_anon_const(db: &'db dyn HirDatabase, def: AnonConstId<'db>) -> InferenceResult<'db> {
         infer_anon_const_query(db, def)
     }

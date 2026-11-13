@@ -190,9 +190,39 @@ impl TypeRef {
     pub(crate) fn unit() -> TypeRef {
         TypeRef::Tuple(ThinVec::new())
     }
+
+    /// An approximation of the number of bytes this type ref allocates on the
+    /// heap (excluding `self` itself).
+    pub(crate) fn heap_size(&self) -> usize {
+        match self {
+            TypeRef::Tuple(it) => it.capacity() * size_of::<TypeRefId>(),
+            TypeRef::Path(it) => it.heap_size(),
+            TypeRef::Reference(it) => std::mem::size_of_val(&**it),
+            TypeRef::Fn(it) => {
+                std::mem::size_of_val(&**it)
+                    + it.binder.as_ref().map_or(0, |it| std::mem::size_of_val(&**it))
+                    + std::mem::size_of_val(&*it.params)
+            }
+            TypeRef::ImplTrait(it) | TypeRef::DynTrait(it) => {
+                it.capacity() * size_of::<TypeBound>()
+                    + it.iter().map(TypeBound::heap_size).sum::<usize>()
+            }
+            _ => 0,
+        }
+    }
 }
 
 impl TypeBound {
+    /// An approximation of the number of bytes this bound allocates on the
+    /// heap (excluding `self` itself).
+    pub(crate) fn heap_size(&self) -> usize {
+        match self {
+            TypeBound::ForLifetime(it, _) => it.capacity() * size_of::<Name>(),
+            TypeBound::Use(it) => it.capacity() * size_of::<UseArgRef>(),
+            _ => 0,
+        }
+    }
+
     pub fn as_path<'a>(&self, map: &'a ExpressionStore) -> Option<(&'a Path, TraitBoundModifier)> {
         match self {
             &TypeBound::Path(p, m) => Some((&map[p], m)),

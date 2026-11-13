@@ -1,7 +1,7 @@
 //! Describes items defined or visible (ie, imported) in a certain scope.
 //! This is shared between modules and blocks.
 
-use std::{fmt, sync::LazyLock};
+use std::{fmt, mem::size_of, sync::LazyLock};
 
 use base_db::{Crate, SourceDatabase};
 use either::Either;
@@ -177,6 +177,51 @@ struct DeriveMacroInvocation {
     /// The `#[derive]` call
     attr_call_id: MacroCallId,
     derive_call_ids: SmallVec<[Option<Either<MacroCallId, BuiltinDeriveImplId>>; 4]>,
+}
+
+fn smallvec_heap_size<A: smallvec::Array>(v: &SmallVec<A>) -> usize {
+    if v.spilled() { v.capacity() * size_of::<A::Item>() } else { 0 }
+}
+
+impl DeriveMacroInvocation {
+    fn heap_size(&self) -> usize {
+        smallvec_heap_size(&self.derive_call_ids)
+    }
+}
+
+impl ItemScope {
+    /// An approximation of the number of bytes this scope allocates on the
+    /// heap (excluding `self` itself).
+    pub fn heap_size(&self) -> usize {
+        self.types.heap_size()
+            + self.values.heap_size()
+            + self.macros.heap_size()
+            + self.unresolved.heap_size()
+            + self.declarations.capacity() * size_of::<ModuleDefId>()
+            + self.impls.capacity() * size_of::<(ImplId, bool)>()
+            + self.builtin_derive_impls.capacity() * size_of::<BuiltinDeriveImplId>()
+            + self.extern_blocks.capacity() * size_of::<ExternBlockId>()
+            + self.unnamed_consts.capacity() * size_of::<ConstId>()
+            + self.unnamed_trait_imports.capacity() * size_of::<(TraitId, Item<()>)>()
+            + self.use_imports_types.heap_size()
+            + self.use_imports_values.heap_size()
+            + self.use_imports_macros.heap_size()
+            + self.use_decls.capacity() * size_of::<UseId>()
+            + self.extern_crate_decls.capacity() * size_of::<ExternCrateId>()
+            + self.legacy_macros.heap_size()
+            + self.attr_macros.heap_size()
+            + self.macro_invocations.heap_size()
+            + self.derive_macros.heap_size()
+            + self.legacy_macros.values().map(|it| smallvec_heap_size(it)).sum::<usize>()
+            + self
+                .derive_macros
+                .values()
+                .map(|it| {
+                    smallvec_heap_size(it)
+                        + it.iter().map(DeriveMacroInvocation::heap_size).sum::<usize>()
+                })
+                .sum::<usize>()
+    }
 }
 
 pub(crate) static BUILTIN_SCOPE: LazyLock<FxIndexMap<Name, PerNs>> = LazyLock::new(|| {

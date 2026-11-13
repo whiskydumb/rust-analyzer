@@ -1088,6 +1088,13 @@ pub struct TopSubtree {
 }
 
 impl TopSubtree {
+    /// The number of bytes this subtree allocates on the heap (excluding `self` itself).
+    pub fn heap_size(&self) -> usize {
+        self.buffer.len()
+            + std::mem::size_of_val(&*self.span_parts)
+            + std::mem::size_of_val(&*self.symbols)
+    }
+
     pub fn empty(span: DelimSpan) -> Self {
         encode_all(
             vec![TokenTree::Subtree(Subtree {

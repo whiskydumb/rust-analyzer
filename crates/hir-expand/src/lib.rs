@@ -31,7 +31,7 @@ use thin_vec::ThinVec;
 use triomphe::Arc;
 
 use core::fmt;
-use std::{borrow::Cow, ops};
+use std::{borrow::Cow, mem::size_of, ops};
 
 use base_db::{Crate, SourceDatabase};
 use either::Either;
@@ -114,6 +114,34 @@ pub trait Lookup {
 impl_intern_lookup!(MacroCallId, MacroCallLoc);
 
 pub type ExpandResult<T> = ValueResult<T, ExpandError>;
+
+fn expand_error_heap_size(err: &ExpandError) -> usize {
+    size_of::<(ExpandErrorKind, Span)>()
+        + match &*err.inner {
+            (ExpandErrorKind::Other(msg) | ExpandErrorKind::ProcMacroPanic(msg), _) => msg.len(),
+            _ => 0,
+        }
+}
+
+fn parse_macro_expansion_heap_size(
+    res: &ExpandResult<(Parse<SyntaxNode>, ExpansionSpanMap)>,
+) -> usize {
+    res.value.0.heap_size()
+        + res.value.1.heap_size()
+        + res.err.as_ref().map_or(0, expand_error_heap_size)
+}
+
+fn macro_arg_heap_size((tt, undo_info, _span): &MacroArgResult) -> usize {
+    tt.heap_size() + undo_info.heap_size()
+}
+
+fn expand_proc_macro_heap_size(res: &ExpandResult<tt::TopSubtree>) -> usize {
+    res.value.heap_size() + res.err.as_ref().map_or(0, expand_error_heap_size)
+}
+
+fn ast_id_map_heap_size(map: &AstIdMap) -> usize {
+    map.heap_size()
+}
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub struct ExpandError {
@@ -488,7 +516,7 @@ impl MacroCallId {
     /// Implementation of [`HirFileId::parse_or_expand`] for the macro case.
     // FIXME: We should verify that the parsed node is one of the many macro node variants we expect
     // instead of having it be untyped
-    #[salsa::tracked(returns(ref), lru = 512)]
+    #[salsa::tracked(returns(ref), lru = 512, heap_size = parse_macro_expansion_heap_size)]
     pub fn parse_macro_expansion(
         self,
         db: &dyn SourceDatabase,
@@ -536,7 +564,7 @@ impl MacroCallId {
     /// Lowers syntactic macro call to a token tree representation. That's a firewall
     /// query, only typing in the macro call itself changes the returned
     /// subtree.
-    #[salsa::tracked(returns(ref))]
+    #[salsa::tracked(returns(ref), heap_size = macro_arg_heap_size)]
     #[deprecated = "calling this is incorrect, call `macro_arg_considering_derives` instead"]
     fn macro_arg(self, db: &dyn SourceDatabase) -> MacroArgResult {
         let loc = self.loc(db);
@@ -735,7 +763,7 @@ impl MacroCallId {
     /// proc macros, since they are not deterministic in general, and
     /// non-determinism breaks salsa in a very, very, very bad way.
     /// @edwin0cheng heroically debugged this once! See #4315 for details
-    #[salsa::tracked(returns(ref))]
+    #[salsa::tracked(returns(ref), heap_size = expand_proc_macro_heap_size)]
     fn expand_proc_macro(self, db: &dyn SourceDatabase) -> ExpandResult<tt::TopSubtree> {
         let loc = self.loc(db);
         let (macro_arg, undo_info, span) = self.macro_arg_considering_derives(db, &loc.kind);
@@ -1751,7 +1779,7 @@ impl HirFileId {
 
 #[salsa::tracked]
 impl HirFileId {
-    #[salsa::tracked(lru = 1024, returns(ref))]
+    #[salsa::tracked(lru = 1024, returns(ref), heap_size = ast_id_map_heap_size)]
     pub fn ast_id_map(self, db: &dyn SourceDatabase) -> AstIdMap {
         AstIdMap::from_source(&self.parse_or_expand(db))
     }

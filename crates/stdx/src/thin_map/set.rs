@@ -29,6 +29,12 @@ impl<T: Hash + Eq, M: Map<T, ()>> ThinSet<T, M> {
         self.map.len()
     }
 
+    /// An approximation of the number of bytes this set allocates on the heap
+    /// (excluding `self` itself).
+    pub fn heap_size(&self) -> usize {
+        self.map.heap_size()
+    }
+
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()

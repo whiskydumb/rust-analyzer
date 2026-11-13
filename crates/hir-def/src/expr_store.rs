@@ -11,6 +11,7 @@ mod tests;
 
 use std::{
     borrow::Borrow,
+    mem::size_of_val,
     ops::{Deref, Index},
 };
 
@@ -18,7 +19,7 @@ use base_db::SourceDatabase;
 use cfg::{CfgExpr, CfgOptions};
 use either::Either;
 use hir_expand::{InFile, MacroCallId, mod_path::ModPath, name::Name};
-use la_arena::{Arena, ArenaMap};
+use la_arena::{Arena, ArenaMap, Idx};
 use smallvec::SmallVec;
 use span::{Edition, SyntaxContext};
 use syntax::{AstPtr, SyntaxNodePtr, ast};
@@ -235,10 +236,7 @@ pub struct ExpressionStoreSourceMap {
     types_map: ThinFxHashMap<TypeSource, TypeRefId>,
 
     lifetime_map_back: ArenaMap<LifetimeRefId, LifetimeSource>,
-    #[expect(
-        unused,
-        reason = "this is here for completeness, and maybe we'll need it in the future"
-    )]
+
     lifetime_map: ThinFxHashMap<LifetimeSource, LifetimeRefId>,
 }
 
@@ -252,6 +250,118 @@ impl PartialEq for ExpressionStoreSourceMap {
         *expr_only == other.expr_only
             && *types_map_back == other.types_map_back
             && *lifetime_map_back == other.lifetime_map_back
+    }
+}
+
+fn arena_map_heap_size<IDX, V>(map: &ArenaMap<Idx<IDX>, V>) -> usize {
+    map.iter().count() * size_of::<Option<V>>()
+}
+
+fn smallvec_heap_size<A: smallvec::Array>(v: &SmallVec<A>) -> usize {
+    if v.spilled() { v.capacity() * size_of::<A::Item>() } else { 0 }
+}
+
+impl ExpressionOnlyStore {
+    /// An approximation of the number of bytes this store allocates on the
+    /// heap (excluding `self` itself).
+    fn heap_size(&self) -> usize {
+        self.exprs.len() * size_of::<Expr>()
+            + self.exprs.iter().map(|(_, it)| it.heap_size()).sum::<usize>()
+            + self.pats.len() * size_of::<Pat>()
+            + self.pats.iter().map(|(_, it)| it.heap_size()).sum::<usize>()
+            + self.bindings.len() * size_of::<Binding>()
+            + self.labels.len() * size_of::<Label>()
+            + self.binding_owners.heap_size()
+            + size_of_val(&*self.block_scopes)
+            + self.ident_hygiene.heap_size()
+            + smallvec_heap_size(&self.expr_roots)
+    }
+}
+
+impl ExpressionStore {
+    /// An approximation of the number of bytes this store allocates on the
+    /// heap (excluding `self` itself).
+    pub fn heap_size(&self) -> usize {
+        self.expr_only
+            .as_deref()
+            .map_or(0, |it| size_of::<ExpressionOnlyStore>() + it.heap_size())
+            + self.types.len() * size_of::<TypeRef>()
+            + self.types.iter().map(|(_, it)| it.heap_size()).sum::<usize>()
+            + self.lifetimes.len() * size_of::<LifetimeRef>()
+    }
+}
+
+impl ExpressionOnlySourceMap {
+    /// An approximation of the number of bytes this source map allocates on
+    /// the heap (excluding `self` itself).
+    fn heap_size(&self) -> usize {
+        self.expr_map.heap_size()
+            + arena_map_heap_size(&self.expr_map_back)
+            + self.pat_map.heap_size()
+            + arena_map_heap_size(&self.pat_map_back)
+            + self.label_map.heap_size()
+            + arena_map_heap_size(&self.label_map_back)
+            + arena_map_heap_size(&self.binding_definitions)
+            + self.binding_definitions.values().map(smallvec_heap_size).sum::<usize>()
+            + self.field_map_back.heap_size()
+            + self.pat_field_map_back.heap_size()
+            + self
+                .template_map
+                .as_deref()
+                .map_or(0, |it| size_of::<FormatTemplate>() + it.heap_size())
+            + self.expansions.heap_size()
+            + self.diagnostics.capacity() * size_of::<ExpressionStoreDiagnostics>()
+            + self
+                .diagnostics
+                .iter()
+                .map(|it| match it {
+                    ExpressionStoreDiagnostics::AwaitOutsideOfAsync { location, .. } => {
+                        location.capacity()
+                    }
+                    ExpressionStoreDiagnostics::InactiveCode { cfg, .. } => cfg.heap_size(),
+                    _ => 0,
+                })
+                .sum::<usize>()
+    }
+}
+
+impl ExpressionStoreSourceMap {
+    /// An approximation of the number of bytes this source map allocates on
+    /// the heap (excluding `self` itself).
+    pub fn heap_size(&self) -> usize {
+        self.expr_only
+            .as_deref()
+            .map_or(0, |it| size_of::<ExpressionOnlySourceMap>() + it.heap_size())
+            + arena_map_heap_size(&self.types_map_back)
+            + self.types_map.heap_size()
+            + arena_map_heap_size(&self.lifetime_map_back)
+            + self.lifetime_map.heap_size()
+    }
+}
+
+impl FormatTemplate {
+    /// An approximation of the number of bytes this allocates on the heap
+    /// (excluding `self` itself).
+    fn heap_size(&self) -> usize {
+        self.format_args_to_captures.heap_size()
+            + self
+                .format_args_to_captures
+                .values()
+                .map(|(_, it)| it.capacity() * size_of::<(syntax::TextRange, Name)>())
+                .sum::<usize>()
+            + self.asm_to_captures.heap_size()
+            + self
+                .asm_to_captures
+                .values()
+                .map(|it| {
+                    it.capacity() * size_of::<Vec<(syntax::TextRange, usize)>>()
+                        + it
+                            .iter()
+                            .map(|it| it.capacity() * size_of::<(syntax::TextRange, usize)>())
+                            .sum::<usize>()
+                })
+                .sum::<usize>()
+            + self.implicit_capture_to_source.heap_size()
     }
 }
 

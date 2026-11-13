@@ -52,6 +52,9 @@ pub trait Map<K, V>: Default {
     fn reserve(&mut self, additional: usize);
     fn len(&self) -> usize;
     fn shrink_to_fit(&mut self);
+    /// An approximation of the number of bytes this map allocates on the heap
+    /// (excluding the map struct itself).
+    fn heap_size(&self) -> usize;
 
     type Iter<'a>: ExactSizeIterator<Item = (&'a K, &'a V)>
     where
@@ -130,6 +133,12 @@ impl<K: Hash + Eq, V, S: BuildHasher + Default> Map<K, V> for std::collections::
     #[inline]
     fn shrink_to_fit(&mut self) {
         self.shrink_to_fit();
+    }
+    #[inline]
+    fn heap_size(&self) -> usize {
+        // Only accounts for the elements portion of the backing allocation,
+        // not the hash table control bytes.
+        self.capacity() * (size_of::<K>() + size_of::<V>())
     }
 
     type Iter<'a>
@@ -312,6 +321,12 @@ impl<K: Hash + Eq, V, M: Map<K, V>> ThinMap<K, V, M> {
             ReprRef::Thin(repr) => repr.len(),
             ReprRef::Map(repr) => repr.len(),
         }
+    }
+
+    /// An approximation of the number of bytes this map allocates on the heap
+    /// (excluding `self` itself).
+    pub fn heap_size(&self) -> usize {
+        ThinMap::raw_heap_size(self)
     }
 
     #[inline]
@@ -878,7 +893,7 @@ mod unsafe_encapsulation {
 
     use thin_vec::ThinVec;
 
-    use super::{Align, Repr, ReprMut, ReprRef, ThinReprVec};
+    use super::{Align, Map, Repr, ReprMut, ReprRef, ThinReprItem, ThinReprVec};
 
     struct PhantomRepr<K, V, M>(PhantomData<Repr<K, V, M>>);
 
@@ -914,6 +929,37 @@ mod unsafe_encapsulation {
 
     impl<K, V, M> ThinMap<K, V, M> {
         const TAG: usize = 0b1;
+
+        /// An approximation of the number of bytes the backing store allocates
+        /// on the heap (excluding `self` itself).
+        ///
+        /// For the `Map` representation this includes the `Box`ed map itself.
+        pub(super) fn raw_heap_size(&self) -> usize
+        where
+            M: Map<K, V>,
+        {
+            let tag = self.ptr.addr().get() & Self::TAG;
+            // SAFETY: Per our invariant. `ThinVec` is layout-equivalent to a pointer.
+            unsafe {
+                match tag {
+                    0 => {
+                        let thin_vec =
+                            mem::transmute::<&NonNull<()>, &ThinReprVec<K, V>>(&self.ptr);
+                        thin_vec.capacity() * mem::size_of::<ThinReprItem<K, V>>()
+                    }
+                    1 => {
+                        let map = &(*self
+                            .ptr
+                            .as_ptr()
+                            .map_addr(|addr| addr & !Self::TAG)
+                            .cast::<Align<M>>())
+                        .0;
+                        mem::size_of::<Align<M>>() + map.heap_size()
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
 
         #[inline]
         pub(super) fn repr_ref<'a>(&'a self) -> ReprRef<'a, K, V, M> {

@@ -1,6 +1,6 @@
 //! Defines `Body`: a lowered representation of functions, statics and
 //! consts.
-use std::ops;
+use std::{mem::size_of_val, ops};
 
 use base_db::SourceDatabase;
 use hir_expand::{InFile, Lookup};
@@ -75,6 +75,14 @@ pub struct BodySourceMap {
     pub store: ExpressionStoreSourceMap,
 }
 
+impl BodySourceMap {
+    /// An approximation of the number of bytes this source map allocates on
+    /// the heap (excluding `self` itself).
+    pub fn heap_size(&self) -> usize {
+        self.store.heap_size()
+    }
+}
+
 impl ops::Deref for BodySourceMap {
     type Target = ExpressionStoreSourceMap;
 
@@ -84,9 +92,19 @@ impl ops::Deref for BodySourceMap {
     }
 }
 
+fn body_with_source_map_heap_size((body, source_map): &(Arc<Body>, BodySourceMap)) -> usize {
+    size_of::<Body>() + body.heap_size() + source_map.heap_size()
+}
+
 #[salsa::tracked]
 impl Body {
-    #[salsa::tracked(lru = 512, returns(ref))]
+    /// An approximation of the number of bytes this body allocates on the heap
+    /// (excluding `self` itself).
+    pub fn heap_size(&self) -> usize {
+        self.store.heap_size() + size_of_val(&*self.params)
+    }
+
+    #[salsa::tracked(lru = 512, returns(ref), heap_size = body_with_source_map_heap_size)]
     pub fn with_source_map(
         db: &dyn SourceDatabase,
         def: DefWithBodyId,

@@ -400,6 +400,39 @@ pub enum Expr {
 const _: () = assert!(std::mem::size_of::<Expr>() == 48);
 
 impl Expr {
+    /// An approximation of the number of bytes this expression allocates on
+    /// the heap (excluding `self` itself).
+    pub(crate) fn heap_size(&self) -> usize {
+        match self {
+            Expr::Path(it) => it.heap_size(),
+            Expr::Block { statements, .. } => {
+                mem::size_of_val(&**statements)
+                    + statements.iter().map(Statement::heap_size).sum::<usize>()
+            }
+            Expr::Call { args, .. } | Expr::Tuple { exprs: args } => mem::size_of_val(&**args),
+            Expr::MethodCall { args, generic_args, .. } => {
+                mem::size_of_val(&**args)
+                    + generic_args.as_ref().map_or(0, |it| {
+                        mem::size_of_val(&**it) + it.heap_size()
+                    })
+            }
+            Expr::Match { arms, .. } => mem::size_of_val(&**arms),
+            Expr::RecordLit { path, fields, .. } => {
+                path.heap_size() + fields.capacity() * size_of::<RecordLitField>()
+            }
+            Expr::Closure { args, arg_types, .. } => {
+                mem::size_of_val(&**args) + mem::size_of_val(&**arg_types)
+            }
+            Expr::Array(Array::ElementList { elements }) => mem::size_of_val(&**elements),
+            Expr::Literal(Literal::ByteString(it) | Literal::CString(it)) => it.len(),
+            Expr::OffsetOf(it) => mem::size_of_val(&*it.fields),
+            Expr::InlineAsm(it) => {
+                it.operands.len() * size_of::<(Option<Name>, AsmOperand)>()
+            }
+            _ => 0,
+        }
+    }
+
     pub fn precedence(&self) -> ast::prec::ExprPrecedence {
         use ast::prec::ExprPrecedence;
 
@@ -686,6 +719,15 @@ pub enum Statement {
     Item(Item),
 }
 
+impl Statement {
+    pub(crate) fn heap_size(&self) -> usize {
+        match self {
+            Statement::Item(Item::MacroDef(it)) => mem::size_of_val(&**it),
+            _ => 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Item {
     MacroDef(Box<MacroDefId>),
@@ -807,6 +849,25 @@ pub enum Pat {
 }
 
 impl Pat {
+    /// An approximation of the number of bytes this pattern allocates on the
+    /// heap (excluding `self` itself).
+    pub(crate) fn heap_size(&self) -> usize {
+        match self {
+            Pat::Tuple { args, .. } | Pat::Or(args) => mem::size_of_val(&**args),
+            Pat::Record { path, args, .. } => {
+                path.heap_size() + mem::size_of_val(&**args)
+            }
+            Pat::Slice { prefix, suffix, .. } => {
+                mem::size_of_val(&**prefix) + mem::size_of_val(&**suffix)
+            }
+            Pat::Path(it) => it.heap_size(),
+            Pat::TupleStruct { path, args, .. } => {
+                path.heap_size() + mem::size_of_val(&**args)
+            }
+            _ => 0,
+        }
+    }
+
     pub fn walk_child_pats(&self, mut f: impl FnMut(PatId)) {
         match self {
             Pat::Range { .. }
