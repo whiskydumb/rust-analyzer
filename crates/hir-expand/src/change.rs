@@ -1,6 +1,6 @@
 //! Defines a unit of change that can applied to the database to get the next
 //! state. Changes are transactional.
-use base_db::{CrateGraphBuilder, FileChange, SourceDatabase, SourceRoot};
+use base_db::{CrateGraphBuilder, FileChange, FileTextData, SourceDatabase, SourceRoot};
 use span::FileId;
 
 use crate::proc_macro::ProcMacrosBuilder;
@@ -26,6 +26,10 @@ impl ChangeWithProcMacros {
 
     pub fn change_file(&mut self, file_id: FileId, new_text: Option<String>) {
         self.source_change.change_file(file_id, new_text)
+    }
+
+    pub fn change_file_data(&mut self, file_id: FileId, new_text: Option<FileTextData>) {
+        self.source_change.change_file_data(file_id, new_text)
     }
 
     pub fn set_crate_graph(&mut self, graph: CrateGraphBuilder) {

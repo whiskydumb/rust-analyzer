@@ -9,8 +9,8 @@ use triomphe::Arc;
 use vfs::FileId;
 
 use crate::{
-    CrateGraphBuilder, CratesIdMap, LibraryRoots, LocalRoots, SourceDatabase, SourceRoot,
-    SourceRootId,
+    CrateGraphBuilder, CratesIdMap, FileTextData, LibraryRoots, LocalRoots, SourceDatabase,
+    SourceRoot, SourceRootId,
 };
 
 /// Encapsulate a bunch of raw `.set` calls on the database.
@@ -18,6 +18,9 @@ use crate::{
 pub struct FileChange {
     pub roots: Option<Vec<SourceRoot>>,
     pub files_changed: Vec<(FileId, Option<String>)>,
+    /// File texts already converted to their storage representation, e.g.
+    /// compressed early during workspace loading to release the raw text.
+    pub files_data_changed: Vec<(FileId, Option<FileTextData>)>,
     pub crate_graph: Option<CrateGraphBuilder>,
 }
 
@@ -44,6 +47,10 @@ impl FileChange {
 
     pub fn change_file(&mut self, file_id: FileId, new_text: Option<String>) {
         self.files_changed.push((file_id, new_text))
+    }
+
+    pub fn change_file_data(&mut self, file_id: FileId, new_text: Option<FileTextData>) {
+        self.files_data_changed.push((file_id, new_text))
     }
 
     pub fn set_crate_graph(&mut self, graph: CrateGraphBuilder) {
@@ -81,6 +88,16 @@ impl FileChange {
             // XXX: can't actually remove the file, just reset the text
             let text = text.unwrap_or_default();
             db.set_file_text_with_durability(file_id, &text, durability)
+        }
+
+        for (file_id, text) in self.files_data_changed {
+            let source_root_id = db.file_source_root(file_id);
+            let source_root = db.source_root(source_root_id.source_root_id(db));
+
+            let durability = file_text_durability(&source_root.source_root(db));
+            // XXX: can't actually remove the file, just reset the text
+            let text = text.unwrap_or_else(|| FileTextData::new("", false));
+            db.set_file_text_data_with_durability(file_id, text, durability)
         }
 
         if let Some(crate_graph) = self.crate_graph {

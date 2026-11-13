@@ -106,18 +106,27 @@ impl Files {
         durability: Durability,
     ) {
         let compress = durability == Durability::HIGH;
+        self.set_file_text_data_with_durability(
+            db,
+            file_id,
+            FileTextData::new(text, compress),
+            durability,
+        );
+    }
+
+    pub fn set_file_text_data_with_durability(
+        &self,
+        db: &mut dyn SourceDatabase,
+        file_id: vfs::FileId,
+        text: FileTextData,
+        durability: Durability,
+    ) {
         match self.files.entry(file_id) {
             Entry::Occupied(mut occupied) => {
-                occupied
-                    .get_mut()
-                    .set_text(db)
-                    .with_durability(durability)
-                    .to(FileTextData::new(text, compress));
+                occupied.get_mut().set_text(db).with_durability(durability).to(text);
             }
             Entry::Vacant(vacant) => {
-                let text = FileText::builder(FileTextData::new(text, compress), file_id)
-                    .durability(durability)
-                    .new(db);
+                let text = FileText::builder(text, file_id).durability(durability).new(db);
                 vacant.insert(text);
             }
         };
@@ -238,7 +247,7 @@ const FILE_TEXT_COMPRESSION_MIN_SIZE: usize = 4096;
 const FILE_TEXT_CACHE_MAX_SIZE: usize = 512 * 1024;
 
 impl FileTextData {
-    fn new(text: &str, compress: bool) -> Self {
+    pub fn new(text: &str, compress: bool) -> Self {
         if compress && text.len() >= FILE_TEXT_COMPRESSION_MIN_SIZE {
             Self::Compressed(lz4_flex::compress_prepend_size(text.as_bytes()).into_boxed_slice())
         } else {
@@ -398,6 +407,13 @@ pub trait SourceDatabase: salsa::Database + std::fmt::Debug {
         &mut self,
         file_id: vfs::FileId,
         text: &str,
+        durability: Durability,
+    );
+
+    fn set_file_text_data_with_durability(
+        &mut self,
+        file_id: vfs::FileId,
+        text: FileTextData,
         durability: Durability,
     );
 
